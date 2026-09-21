@@ -1,7 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"C:/perfguard/build/cmake_install.cmake"
-	],
-	"Parallel" : false
-}

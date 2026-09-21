@@ -7,16 +7,45 @@
 #include <filesystem>
 #include <iomanip>
 #include <string>
-#include<thread>
+#include <cstdio>
+#include <thread>
 int main() {
     const int N = 1'000'000;
     const int RUNS = 10;
+    // =========================
+    // 1. Get current Git commit
+    // =========================
+    std::string git_commit;
+    FILE* pipe = _popen(
+        "git rev-parse --short HEAD",
+        "r"
+    );
+    if (pipe) {
+        char buffer[128];
+        if (fgets(
+                buffer,
+                sizeof(buffer),
+                pipe)) {
+            git_commit = buffer;
+        }
+        _pclose(pipe);
+    }
+    if (!git_commit.empty() &&
+        git_commit.back() == '\n') {
+        git_commit.pop_back();
+    }
+    std::cout
+        << "PerfGuard Benchmark\n";
+    std::cout
+        << "===================\n";
+    std::cout
+        << "Git Commit: "
+        << git_commit
+        << "\n\n";
+    // =========================
+    // 2. Run benchmark
+    // =========================
     std::vector<long long> results;
-    std::cout << "PerfGuard Benchmark\n";
-    std::cout << "===================\n";
-    // =========================
-    // 1. Run benchmark
-    // =========================
     for (int run = 1; run <= RUNS; ++run) {
         std::vector<int> data(N);
         for (int i = 0; i < N; ++i) {
@@ -24,9 +53,14 @@ int main() {
         }
         auto start =
             std::chrono::high_resolution_clock::now();
-        std::sort(data.begin(), data.end());
+        std::sort(
+            data.begin(),
+            data.end()
+        );
+        // Artificial regression.
+        // This is only for testing.
         std::this_thread::sleep_for(
-         std::chrono::milliseconds(10)
+            std::chrono::milliseconds(10)
         );
         auto end =
             std::chrono::high_resolution_clock::now();
@@ -34,16 +68,18 @@ int main() {
             std::chrono::duration_cast<
                 std::chrono::microseconds
             >(end - start);
-        results.push_back(duration.count());
-
-        std::cout << "Run "
-                  << run
-                  << ": "
-                  << duration.count()
-                  << " us\n";
+        results.push_back(
+            duration.count()
+        );
+        std::cout
+            << "Run "
+            << run
+            << ": "
+            << duration.count()
+            << " us\n";
     }
     // =========================
-    // 2. Calculate statistics
+    // 3. Calculate statistics
     // =========================
     auto min_time =
         *std::min_element(
@@ -65,19 +101,24 @@ int main() {
         static_cast<double>(total)
         / results.size();
     std::cout << "\n";
-    std::cout << "Statistics\n";
-    std::cout << "==========\n";
-    std::cout << "Min:     "
-              << min_time
-              << " us\n";
-    std::cout << "Max:     "
-              << max_time
-              << " us\n";
-    std::cout << "Average: "
-              << average
-              << " us\n";
+    std::cout
+        << "Statistics\n";
+    std::cout
+        << "==========\n";
+    std::cout
+        << "Min:     "
+        << min_time
+        << " us\n";
+    std::cout
+        << "Max:     "
+        << max_time
+        << " us\n";
+    std::cout
+        << "Average: "
+        << average
+        << " us\n";
     // =========================
-    // 3. Baseline
+    // 4. Baseline
     // =========================
     std::filesystem::create_directories(
         ".perfguard"
@@ -85,9 +126,8 @@ int main() {
     const std::string baseline_path =
         ".perfguard/baseline.json";
     // =========================
-    // 4. First run
+    // 5. First run
     // =========================
-
     if (!std::filesystem::exists(
             baseline_path)) {
         std::ofstream file(
@@ -101,22 +141,32 @@ int main() {
         file << std::fixed
              << std::setprecision(2);
         file << "{\n";
-        file << "    \"benchmark\": \"sort_1m\",\n";
-        file << "    \"average_us\": "
-             << average
-             << "\n";
+        file
+            << "    \"benchmark\": \"sort_1m\",\n";
+        file
+            << "    \"commit\": \""
+            << git_commit
+            << "\",\n";
+        file
+            << "    \"average_us\": "
+            << average
+            << "\n";
         file << "}\n";
         file.close();
         std::cout << "\n";
         std::cout
             << "Baseline created.\n";
         std::cout
+            << "Commit: "
+            << git_commit
+            << "\n";
+        std::cout
             << "Average: "
             << average
             << " us\n";
     }
     // =========================
-    // 5. Compare with baseline
+    // 6. Compare with baseline
     // =========================
     else {
         std::ifstream file(
@@ -129,21 +179,56 @@ int main() {
         }
         std::string line;
         double baseline = 0.0;
+        std::string baseline_commit;
         while (std::getline(
             file,
             line)) {
-            const std::string key =
-                "\"average_us\":";
-            auto pos =
-                line.find(key);
-            if (pos != std::string::npos) {
+            // Read baseline commit
+            const std::string commit_key =
+                "\"commit\":";
+            auto commit_pos =
+                line.find(commit_key);
+            if (commit_pos != std::string::npos) {
                 std::string value =
                     line.substr(
-                        pos + key.length()
+                        commit_pos
+                        + commit_key.length()
+                    );
+                auto first_quote =
+                    value.find('"');
+                auto second_quote =
+                    value.find(
+                        '"',
+                        first_quote + 1
+                    );
+                if (first_quote !=
+                    std::string::npos &&
+                    second_quote !=
+                    std::string::npos) {
+
+                    baseline_commit =
+                        value.substr(
+                            first_quote + 1,
+                            second_quote
+                            - first_quote
+                            - 1
+                        );
+                }
+            }
+            // Read baseline average
+            const std::string average_key =
+                "\"average_us\":";
+            auto average_pos =
+                line.find(average_key);
+            if (average_pos !=
+                std::string::npos) {
+                std::string value =
+                    line.substr(
+                        average_pos
+                        + average_key.length()
                     );
                 baseline =
                     std::stod(value);
-                break;
             }
         }
         file.close();
@@ -153,7 +238,7 @@ int main() {
             return 1;
         }
         // =========================
-        // 6. Calculate regression
+        // 7. Calculate regression
         // =========================
         double change =
             ((average - baseline)
@@ -165,6 +250,14 @@ int main() {
             << "Performance Comparison\n";
         std::cout
             << "======================\n";
+        std::cout
+            << "Baseline Commit: "
+            << baseline_commit
+            << "\n";
+        std::cout
+            << "Current Commit:  "
+            << git_commit
+            << "\n";
         std::cout
             << "Baseline: "
             << baseline
@@ -182,7 +275,7 @@ int main() {
             << threshold
             << "%\n";
         // =========================
-        // 7. Final result
+        // 8. Final result
         // =========================
         if (change > threshold) {
             std::cout << "\n";
