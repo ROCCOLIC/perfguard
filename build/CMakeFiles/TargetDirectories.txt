@@ -1,0 +1,3 @@
+C:/perfguard/build/CMakeFiles/perfguard.dir
+C:/perfguard/build/CMakeFiles/ALL_BUILD.dir
+C:/perfguard/build/CMakeFiles/ZERO_CHECK.dir

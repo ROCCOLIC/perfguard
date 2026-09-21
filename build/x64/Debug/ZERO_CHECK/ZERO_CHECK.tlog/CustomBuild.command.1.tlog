@@ -1,0 +1,10 @@
+^C:\PERFGUARD\BUILD\CMAKEFILES\580131A6C5D8B22D4BCAA9B53F5D68A8\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/perfguard -BC:/perfguard/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/perfguard/build/PerfGuard.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
