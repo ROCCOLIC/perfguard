@@ -25,6 +25,9 @@ int main() {
         auto start =
             std::chrono::high_resolution_clock::now();
         std::sort(data.begin(), data.end());
+        std::this_thread::sleep_for(
+         std::chrono::milliseconds(10)
+        );
         auto end =
             std::chrono::high_resolution_clock::now();
         auto duration =
