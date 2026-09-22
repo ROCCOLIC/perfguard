@@ -673,35 +673,29 @@ DiagnosisResult diagnose_commit(
     std::string output;
 
     {
-        const std::string command =
-            "\"" +
-            executable.string() +
-            "\"";
+            const std::string command =
+                "\"" +
+                executable.string() +
+                "\"";
 
-        int exit_code = 0;
+            int exit_code = 0;
 
-        output =
-            run_command(
-                command,
-                exit_code
-            );
+            output =
+                run_command(
+                    command,
+                    exit_code
+                );
 
-        if (
-            exit_code != 0
-        ) {
-
-            cleanup(
-                project_root,
-                worktree,
-                build_dir
-            );
-
-            result.error =
-                "Target benchmark failed.";
-
-            return result;
-        }
+            // The benchmark returns exit code 1 when a
+            // performance regression is detected.
+            //
+            // Therefore, a non-zero benchmark exit code does
+            // not necessarily mean that benchmark execution failed.
+            //
+            // We determine whether execution succeeded by checking
+            // whether a valid benchmark average can be parsed below.
     }
+    
 
     // ========================================================
     // Step 11

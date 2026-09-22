@@ -297,6 +297,10 @@ bool parse_average(
 // The source tree may have been checked out to an old commit,
 // but this executable itself remains the new PerfGuard binary.
 //
+// The actual benchmark is the standalone:
+//
+//     sort_1m.exe
+//
 // Exit code:
 //   0   = good
 //   1   = bad / regression
@@ -429,7 +433,7 @@ int run_bisect_test(
     }
 
     // --------------------------------------------------------
-    // Run benchmark
+    // Run standalone benchmark
     // --------------------------------------------------------
 
     cout
@@ -438,12 +442,12 @@ int run_bisect_test(
     fs::path executable =
         BISECT_BUILD_DIR /
         "Debug" /
-        "perfguard.exe";
+        "sort_1m.exe";
 
     if (!fs::exists(executable))
     {
         cerr
-            << "Benchmark executable not found:\n"
+            << "Standalone benchmark executable not found:\n"
             << executable.string()
             << "\n";
 
@@ -460,15 +464,16 @@ int run_bisect_test(
             benchmark_command
         );
 
-    // The benchmark program may return 1 when it detects
-    // a performance regression.
+    // --------------------------------------------------------
+    // Parse benchmark result
     //
-    // That is a valid "bad" result for Git bisect.
-    // Therefore, do NOT use benchmark.exit_code here
-    // to determine whether the benchmark itself failed.
+    // sort_1m.exe is responsible only for measuring time.
     //
-    // Instead, parse the benchmark output.
-    // If Average cannot be parsed, the test is skipped.
+    // It should normally return 0.
+    //
+    // We therefore use its output, rather than its exit code,
+    // as the source of the measured performance value.
+    // --------------------------------------------------------
 
     double current_us = 0.0;
 
@@ -501,7 +506,10 @@ int run_bisect_test(
         100.0;
 
     cout
-        << "\nBaseline: "
+        << "\nBenchmark: sort_1m\n";
+
+    cout
+        << "Baseline: "
         << baseline_us
         << " us\n";
 
@@ -533,6 +541,7 @@ int run_bisect_test(
 
     return 0;
 }
+
 // ============================================================
 // Extract first bad commit
 // ============================================================
@@ -754,11 +763,11 @@ BisectResult run_bisect(
     // Run current PerfGuard executable as test runner
     //
     // IMPORTANT:
-    // This executable belongs to the NEW commit.
     //
-    // Git may checkout OLD commits, but this executable
-    // remains available because it lives in the existing
-    // build directory.
+    // The PerfGuard executable itself is NOT the benchmark.
+    //
+    // It only acts as the Git bisect test runner and invokes
+    // sort_1m.exe inside run_bisect_test().
     // --------------------------------------------------------
 
     string runner =

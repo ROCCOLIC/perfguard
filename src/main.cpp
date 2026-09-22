@@ -110,55 +110,132 @@ string get_git_commit()
 // Benchmark
 // ============================================================
 
-double run_benchmark()
+const string BENCHMARK_EXECUTABLE =
+    "build/Debug/sort_1m.exe";
+
+string run_command(
+    const string& command
+)
 {
-    vector<int> data(
-        BENCHMARK_SIZE
-    );
+    array<char, 4096> buffer{};
 
-    double total_us = 0.0;
+    string result;
 
-    for (
-        int run = 0;
-        run < BENCHMARK_RUNS;
-        ++run
-    )
-    {
-        for (
-            int i = 0;
-            i < BENCHMARK_SIZE;
-            ++i
-        ) {
-            data[i] =
-                (
-                    BENCHMARK_SIZE -
-                    i
-                ) % 100000;
-        }
-
-        auto start =
-            chrono::high_resolution_clock::now();
-
-        sort(
-            data.begin(),
-            data.end()
+    FILE* pipe =
+        _popen(
+            command.c_str(),
+            "r"
         );
 
-        auto end =
-            chrono::high_resolution_clock::now();
-
-        chrono::duration<double, micro> elapsed =
-            end - start;
-
-        total_us +=
-            elapsed.count();
+    if (
+        pipe == nullptr
+    ) {
+        return {};
     }
 
-    return
-        total_us /
-        BENCHMARK_RUNS;
+    while (
+        fgets(
+            buffer.data(),
+            static_cast<int>(buffer.size()),
+            pipe
+        ) != nullptr
+    ) {
+        result += buffer.data();
+    }
+
+    _pclose(
+        pipe
+    );
+
+    return result;
 }
 
+
+bool run_benchmark(
+    double& average
+)
+{
+    fs::path executable =
+        fs::absolute(
+            BENCHMARK_EXECUTABLE
+        );
+
+    if (
+        !fs::exists(
+            executable
+        )
+    ) {
+        cerr
+            << "ERROR: Benchmark executable not found:\n"
+            << "  "
+            << executable.string()
+            << "\n";
+
+        cerr
+            << "\nBuild it with:\n"
+            << "  cmake --build build --config Debug\n";
+
+        return false;
+    }
+
+    string output =
+        run_command(
+            "\"" +
+            executable.string() +
+            "\""
+        );
+
+    if (
+        output.empty()
+    ) {
+        cerr
+            << "ERROR: Benchmark produced no output.\n";
+
+        return false;
+    }
+
+    static const regex pattern(
+        R"(Average:\s*([0-9.]+)\s*us)"
+    );
+
+    smatch match;
+
+    if (
+        !regex_search(
+            output,
+            match,
+            pattern
+        )
+    ) {
+        cerr
+            << "ERROR: Could not parse benchmark output.\n";
+
+        cerr
+            << "\nBenchmark output:\n"
+            << output
+            << "\n";
+
+        return false;
+    }
+
+    try {
+        average =
+            stod(
+                match[1].str()
+            );
+    }
+    catch (...) {
+        cerr
+            << "ERROR: Invalid benchmark average.\n";
+
+        return false;
+    }
+
+    cout
+        << output;
+
+    return average > 0.0;
+}
 
 // ============================================================
 // Artificial regression benchmark
@@ -1037,14 +1114,18 @@ int main(
         << "Running benchmark...\n";
 
     double average =
-        run_benchmark();
+    0.0;
+
+    if (
+        !run_benchmark(
+            average
+        )
+    ) {
+        return 1;
+    }
 
     cout
         << "\n";
-
-    print_benchmark_result(
-        average
-    );
 
 
     // ========================================================

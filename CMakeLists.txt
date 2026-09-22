@@ -11,3 +11,6 @@ add_executable(perfguard
     src/diagnosis.cpp
     src/bisect.cpp
 )
+add_executable(sort_1m
+    benchmarks/sort_1m.cpp
+)
