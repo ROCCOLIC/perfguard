@@ -2,7 +2,8 @@
 
 #include <string>
 
-struct BisectResult {
+struct BisectResult
+{
     bool success = false;
 
     std::string baseline_commit;
@@ -12,4 +13,11 @@ struct BisectResult {
     std::string error;
 };
 
-BisectResult run_bisect();
+BisectResult run_bisect(
+    const std::string& executable_path
+);
+
+int run_bisect_test(
+    const std::string& baseline_us,
+    const std::string& threshold
+);

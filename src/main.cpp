@@ -1,5 +1,5 @@
-
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -11,11 +11,15 @@
 #include <string>
 #include <thread>
 #include <vector>
-#include <array>
+
 #include "evidence.h"
 #include "diagnosis.h"
 #include "bisect.h"
+
 using namespace std;
+
+namespace fs = std::filesystem;
+
 
 // ============================================================
 // Configuration
@@ -272,10 +276,10 @@ bool create_baseline(
     const string& commit
 )
 {
-    filesystem::path baseline_path =
+    fs::path baseline_path =
         BASELINE_PATH;
 
-    filesystem::path parent =
+    fs::path parent =
         baseline_path.parent_path();
 
     if (
@@ -283,7 +287,7 @@ bool create_baseline(
     ) {
         error_code error;
 
-        filesystem::create_directories(
+        fs::create_directories(
             parent,
             error
         );
@@ -347,7 +351,7 @@ bool load_baseline_average(
 )
 {
     if (
-        !filesystem::exists(
+        !fs::exists(
             BASELINE_PATH
         )
     ) {
@@ -377,7 +381,7 @@ bool load_baseline_average(
     }
 
     static const regex pattern(
-        R"("average_us"\s*:\s*([0-9.]+))"
+        R"PG("average_us"\s*:\s*([0-9.]+))PG"
     );
 
     smatch match;
@@ -393,15 +397,12 @@ bool load_baseline_average(
     }
 
     try {
-
         average =
             stod(
                 match[1].str()
             );
-
     }
     catch (...) {
-
         return false;
     }
 
@@ -418,7 +419,7 @@ bool load_baseline_commit(
 )
 {
     if (
-        !filesystem::exists(
+        !fs::exists(
             BASELINE_PATH
         )
     ) {
@@ -494,7 +495,8 @@ void show_commit_evidence(
         return;
     }
 
-    cout << "\n";
+    cout
+        << "\n";
 
     cout
         << "========================================\n";
@@ -505,7 +507,8 @@ void show_commit_evidence(
     cout
         << "========================================\n";
 
-    cout << "\n";
+    cout
+        << "\n";
 
     cout
         << "Commit: "
@@ -558,7 +561,6 @@ void show_commit_evidence(
             << "  None detected.\n";
     }
     else {
-
         for (
             const auto& line :
             report.performance_evidence
@@ -570,7 +572,8 @@ void show_commit_evidence(
         }
     }
 
-    cout << "\n";
+    cout
+        << "\n";
 }
 
 
@@ -588,43 +591,7 @@ int main(
     //
     // Full performance regression diagnosis.
     // ========================================================
-    if (
-        argc >= 2 &&
-        string(argv[1]) == "--bisect"
-    ) {
-        const BisectResult result =
-            run_bisect();
 
-        if (!result.output.empty()) {
-            cout << result.output;
-        }
-
-        if (!result.success) {
-            cerr
-                << "Bisect failed: "
-                << result.error
-                << '\n';
-
-            return 1;
-        }
-
-        cout << '\n';
-        cout
-            << "========================================\n";
-
-        cout
-            << "First Bad Commit\n";
-
-        cout
-            << "========================================\n";
-
-        cout
-            << "Commit: "
-            << result.first_bad_commit
-            << '\n';
-
-        return 0;
-    }
     if (
         argc >= 3 &&
         string(argv[1]) ==
@@ -666,7 +633,8 @@ int main(
             return 1;
         }
 
-        cout << "\n";
+        cout
+            << "\n";
 
         cout
             << "========================================\n";
@@ -677,7 +645,8 @@ int main(
         cout
             << "========================================\n";
 
-        cout << "\n";
+        cout
+            << "\n";
 
         cout
             << "Commit: "
@@ -730,7 +699,6 @@ int main(
                 << "  None detected.\n";
         }
         else {
-
             for (
                 const auto& line :
                 evidence.performance_evidence
@@ -779,7 +747,8 @@ int main(
                 << "  No significant performance regression detected.\n";
         }
 
-        cout << "\n";
+        cout
+            << "\n";
 
         return diagnosis.regression
             ? 1
@@ -802,6 +771,93 @@ int main(
         show_commit_evidence(
             argv[2]
         );
+
+        return 0;
+    }
+
+
+    // ========================================================
+    // --bisect-test <baseline_us> <threshold>
+    //
+    // INTERNAL MODE
+    //
+    // This is called by the current PerfGuard executable while
+    // Git checks out historical commits.
+    //
+    // Exit codes:
+    //
+    //   0   = GOOD
+    //   1   = BAD / regression
+    //   125 = SKIP
+    // ========================================================
+
+    if (
+        argc >= 4 &&
+        string(argv[1]) ==
+            "--bisect-test"
+    )
+    {
+        return run_bisect_test(
+            argv[2],
+            argv[3]
+        );
+    }
+
+
+    // ========================================================
+    // --bisect
+    //
+    // Automatically find the first commit that introduced
+    // a performance regression.
+    // ========================================================
+
+    if (
+        argc >= 2 &&
+        string(argv[1]) ==
+            "--bisect"
+    )
+    {
+        fs::path executable_path =
+            fs::absolute(
+                argv[0]
+            );
+
+        const BisectResult result =
+            run_bisect(
+                executable_path.string()
+            );
+
+        if (
+            !result.output.empty()
+        ) {
+            cout
+                << result.output;
+        }
+
+        if (
+            !result.success
+        ) {
+            cerr
+                << "\nBisect failed: "
+                << result.error
+                << "\n";
+
+            return 1;
+        }
+
+        cout
+            << "\n========================================\n";
+
+        cout
+            << "First Bad Commit\n";
+
+        cout
+            << "========================================\n";
+
+        cout
+            << "Commit: "
+            << result.first_bad_commit
+            << "\n";
 
         return 0;
     }
@@ -836,7 +892,8 @@ int main(
         double average =
             run_artificial_regression_benchmark();
 
-        cout << "\n";
+        cout
+            << "\n";
 
         print_benchmark_result(
             average
@@ -968,7 +1025,8 @@ int main(
             << "Commit: unknown\n";
     }
 
-    cout << "\n";
+    cout
+        << "\n";
 
 
     // --------------------------------------------------------
@@ -981,7 +1039,8 @@ int main(
     double average =
         run_benchmark();
 
-    cout << "\n";
+    cout
+        << "\n";
 
     print_benchmark_result(
         average
@@ -1014,12 +1073,13 @@ int main(
     // ========================================================
 
     if (
-        !filesystem::exists(
+        !fs::exists(
             BASELINE_PATH
         )
     )
     {
-        cout << "\n";
+        cout
+            << "\n";
 
         cout
             << "No baseline found.\n";
@@ -1154,7 +1214,8 @@ int main(
     // Normal result
     // ========================================================
 
-    cout << "\n";
+    cout
+        << "\n";
 
     cout
         << "Baseline Commit: "
@@ -1201,7 +1262,8 @@ int main(
         << REGRESSION_THRESHOLD
         << "%\n";
 
-    cout << "\n";
+    cout
+        << "\n";
 
     if (
         change >
