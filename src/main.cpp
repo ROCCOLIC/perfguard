@@ -662,7 +662,831 @@ int main(
     int argc,
     char* argv[]
 )
-{
+{    
+    // ========================================================
+    // --analyze
+    //
+    // Full automatic performance analysis:
+    //
+    //   1. Run current benchmark
+    //   2. Detect regression
+    //   3. Automatically bisect Git history
+    //   4. Diagnose first bad commit
+    //   5. Generate Markdown report
+    // ========================================================
+
+    if (
+        argc >= 2 &&
+        string(argv[1]) ==
+            "--analyze"
+    )
+    {
+        cout
+            << "========================================\n";
+
+        cout
+            << "PerfGuard Automatic Performance Analysis\n";
+
+        cout
+            << "========================================\n\n";
+
+
+        // ----------------------------------------------------
+        // Step 1: Check current benchmark
+        // ----------------------------------------------------
+
+        cout
+            << "[1/4] Detecting performance regression...\n\n";
+
+        double baseline =
+            0.0;
+
+        string baseline_commit;
+
+        if (
+            !load_baseline_average(
+                baseline
+            )
+        ) {
+            cerr
+                << "ERROR: Could not read baseline.\n";
+
+            return 1;
+        }
+
+        load_baseline_commit(
+            baseline_commit
+        );
+
+        double current =
+            0.0;
+
+        if (
+            !run_benchmark(
+                current
+            )
+        ) {
+            return 1;
+        }
+
+        double change =
+            calculate_change(
+                baseline,
+                current
+            );
+
+        cout
+            << "\nBaseline: "
+            << fixed
+            << setprecision(2)
+            << baseline
+            << " us\n";
+
+        cout
+            << "Current:  "
+            << fixed
+            << setprecision(2)
+            << current
+            << " us\n";
+
+        cout
+            << "Change:   ";
+
+        if (
+            change >= 0
+        ) {
+            cout
+                << "+";
+        }
+
+        cout
+            << fixed
+            << setprecision(2)
+            << change
+            << "%\n";
+
+        cout
+            << "Threshold: "
+            << REGRESSION_THRESHOLD
+            << "%\n";
+
+
+        // ----------------------------------------------------
+        // No regression
+        // ----------------------------------------------------
+
+        if (
+            change <=
+            REGRESSION_THRESHOLD
+        ) {
+            cout
+                << "\nResult: OK\n";
+
+            cout
+                << "\nNo performance regression detected.\n";
+
+            return 0;
+        }
+
+
+        cout
+            << "\nResult: REGRESSION\n\n";
+
+
+        // ----------------------------------------------------
+        // Step 2: Automatic bisect
+        // ----------------------------------------------------
+
+        cout
+            << "[2/4] Finding first bad commit...\n\n";
+
+        fs::path executable_path =
+            fs::absolute(
+                argv[0]
+            );
+
+        BisectResult bisect_result =
+            run_bisect(
+                executable_path.string()
+            );
+
+        if (
+            !bisect_result.output.empty()
+        ) {
+            cout
+                << bisect_result.output;
+        }
+
+        if (
+            !bisect_result.success
+        ) {
+            cerr
+                << "\nBisect failed: "
+                << bisect_result.error
+                << "\n";
+
+            return 1;
+        }
+
+        const string first_bad_commit =
+            bisect_result.first_bad_commit;
+
+        if (
+            first_bad_commit.empty()
+        ) {
+            cerr
+                << "\nBisect did not return "
+                   "a first bad commit.\n";
+
+            return 1;
+        }
+
+        cout
+            << "\nFirst bad commit: "
+            << first_bad_commit
+            << "\n\n";
+
+
+        // ----------------------------------------------------
+        // Step 3: Diagnose
+        // ----------------------------------------------------
+
+        cout
+            << "[3/4] Diagnosing first bad commit...\n\n";
+
+        EvidenceReport evidence =
+            analyze_commit(
+                first_bad_commit
+            );
+
+        if (
+            !evidence.success
+        ) {
+            cerr
+                << "Evidence analysis failed: "
+                << evidence.error
+                << "\n";
+
+            return 1;
+        }
+
+        DiagnosisResult diagnosis =
+            diagnose_commit(
+                first_bad_commit
+            );
+
+        if (
+            !diagnosis.success
+        ) {
+            cerr
+                << "Commit diagnosis failed: "
+                << diagnosis.error
+                << "\n";
+
+            return 1;
+        }
+
+
+        // ----------------------------------------------------
+        // Step 4: Generate report
+        // ----------------------------------------------------
+
+        cout
+            << "[4/4] Generating report...\n\n";
+
+        ofstream report(
+            "perfguard-report.md"
+        );
+
+        if (
+            !report
+        ) {
+            cerr
+                << "ERROR: Could not create "
+                   "perfguard-report.md\n";
+
+            return 1;
+        }
+
+        report
+            << "# PerfGuard Performance Report\n\n";
+
+        report
+            << "## Summary\n\n";
+
+        report
+            << "**Performance regression detected.**\n\n";
+
+        report
+            << "## Benchmark\n\n";
+
+        report
+            << "- Name: `sort_1m`\n";
+
+        report
+            << "- Runs: "
+            << BENCHMARK_RUNS
+            << "\n\n";
+
+        report
+            << "## Performance\n\n";
+
+        report
+            << "| Metric | Value |\n";
+
+        report
+            << "|---|---:|\n";
+
+        report
+            << "| Baseline | "
+            << fixed
+            << setprecision(2)
+            << baseline
+            << " us |\n";
+
+        report
+            << "| Current | "
+            << fixed
+            << setprecision(2)
+            << current
+            << " us |\n";
+
+        report
+            << "| Change | +"
+            << fixed
+            << setprecision(2)
+            << change
+            << "% |\n";
+
+        report
+            << "| Threshold | "
+            << REGRESSION_THRESHOLD
+            << "% |\n\n";
+
+
+        // ----------------------------------------------------
+        // Git information
+        // ----------------------------------------------------
+
+        report
+            << "## Git\n\n";
+
+        report
+            << "- Baseline commit: `"
+            << baseline_commit
+            << "`\n";
+
+        report
+            << "- First bad commit: `"
+            << first_bad_commit
+            << "`\n\n";
+
+
+        // ----------------------------------------------------
+        // Commit information
+        // ----------------------------------------------------
+
+        report
+            << "## First Bad Commit\n\n";
+
+        report
+            << "- Commit: `"
+            << evidence.commit
+            << "`\n";
+
+        report
+            << "- Message: "
+            << evidence.message
+            << "\n";
+
+        report
+            << "- Author: "
+            << evidence.author
+            << "\n\n";
+
+
+        // ----------------------------------------------------
+        // Changed files
+        // ----------------------------------------------------
+
+        report
+            << "## Changed Files\n\n";
+
+        for (
+            const auto& file :
+            evidence.changed_files
+        ) {
+            report
+                << "- `"
+                << file
+                << "`\n";
+        }
+
+        report
+            << "\n";
+
+
+        // ----------------------------------------------------
+        // Change summary
+        // ----------------------------------------------------
+
+        report
+            << "## Change Summary\n\n";
+
+        report
+            << "- Lines added: "
+            << evidence.lines_added
+            << "\n";
+
+        report
+            << "- Lines removed: "
+            << evidence.lines_removed
+            << "\n\n";
+
+
+        // ----------------------------------------------------
+        // Performance evidence
+        // ----------------------------------------------------
+
+        report
+            << "## Performance Evidence\n\n";
+
+        if (
+            evidence.performance_evidence.empty()
+        ) {
+            report
+                << "No obvious performance-related "
+                   "changes were detected.\n\n";
+        }
+        else {
+            for (
+                const auto& line :
+                evidence.performance_evidence
+            ) {
+                report
+                    << "```cpp\n";
+
+                report
+                    << line
+                    << "\n";
+
+                report
+                    << "```\n\n";
+            }
+        }
+
+
+        // ----------------------------------------------------
+        // Diagnosis
+        // ----------------------------------------------------
+
+        report
+            << "## Diagnosis\n\n";
+
+        if (
+            diagnosis.regression
+        ) {
+            report
+                << "Performance regression detected.\n\n";
+        }
+        else {
+            report
+                << "No significant performance regression "
+                   "detected at the target commit.\n\n";
+        }
+
+        report
+            << "- Baseline: "
+            << fixed
+            << setprecision(2)
+            << diagnosis.baseline_us
+            << " us\n";
+
+        report
+            << "- Target: "
+            << fixed
+            << setprecision(2)
+            << diagnosis.current_us
+            << " us\n";
+
+        report
+            << "- Change: "
+            << fixed
+            << setprecision(2)
+            << diagnosis.change_percent
+            << "%\n";
+
+        report
+            << "- Threshold: "
+            << fixed
+            << setprecision(2)
+            << diagnosis.threshold_percent
+            << "%\n\n";
+
+
+        // ----------------------------------------------------
+        // Result
+        // ----------------------------------------------------
+
+        report
+            << "## Result\n\n";
+
+        report
+            << "`REGRESSION`\n";
+
+        report.close();
+
+
+        // ----------------------------------------------------
+        // Final console output
+        // ----------------------------------------------------
+
+        cout
+            << "========================================\n";
+
+        cout
+            << "Analysis Complete\n";
+
+        cout
+            << "========================================\n\n";
+
+        cout
+            << "First bad commit:\n"
+            << "  "
+            << first_bad_commit
+            << "\n\n";
+
+        cout
+            << "Regression:\n"
+            << "  +"
+            << fixed
+            << setprecision(2)
+            << change
+            << "%\n\n";
+
+        cout
+            << "Report:\n"
+            << "  perfguard-report.md\n";
+
+        return 1;
+    }
+    // ========================================================
+    // --report
+    //
+    // Generate a Markdown performance regression report.
+    // ========================================================
+
+    if (
+        argc >= 2 &&
+        string(argv[1]) ==
+            "--report"
+    )
+    {
+        double baseline =
+            0.0;
+
+        string baseline_commit;
+
+        if (
+            !load_baseline_average(
+                baseline
+            )
+        ) {
+            cerr
+                << "ERROR: Could not read baseline average.\n";
+
+            return 1;
+        }
+
+        load_baseline_commit(
+            baseline_commit
+        );
+
+        string current_commit =
+            get_git_commit();
+
+        if (
+            current_commit.empty()
+        ) {
+            current_commit =
+                "unknown";
+        }
+
+        cout
+            << "========================================\n";
+
+        cout
+            << "PerfGuard Performance Report\n";
+
+        cout
+            << "========================================\n";
+
+        cout
+            << "\nRunning benchmark...\n";
+
+        double current =
+            0.0;
+
+        if (
+            !run_benchmark(
+                current
+            )
+        ) {
+            return 1;
+        }
+
+        double change =
+            calculate_change(
+                baseline,
+                current
+            );
+
+        bool regression =
+            change >
+            REGRESSION_THRESHOLD;
+
+        // ----------------------------------------------------
+        // Analyze current commit
+        // ----------------------------------------------------
+
+        EvidenceReport evidence =
+            analyze_commit(
+                current_commit
+            );
+
+        // ----------------------------------------------------
+        // Generate Markdown
+        // ----------------------------------------------------
+
+        ofstream report(
+            "perfguard-report.md"
+        );
+
+        if (
+            !report
+        ) {
+            cerr
+                << "ERROR: Could not create "
+                   "perfguard-report.md\n";
+
+            return 1;
+        }
+
+        report
+            << "# PerfGuard Performance Report\n\n";
+
+        report
+            << "## Summary\n\n";
+
+        if (
+            regression
+        ) {
+            report
+                << "**Performance regression detected.**\n\n";
+        }
+        else {
+            report
+                << "**No significant performance regression detected.**\n\n";
+        }
+
+        report
+            << "## Benchmark\n\n";
+
+        report
+            << "- Name: `sort_1m`\n";
+
+        report
+            << "- Runs: "
+            << BENCHMARK_RUNS
+            << "\n\n";
+
+        report
+            << "## Performance\n\n";
+
+        report
+            << "| Metric | Value |\n";
+
+        report
+            << "|---|---:|\n";
+
+        report
+            << "| Baseline | "
+            << fixed
+            << setprecision(2)
+            << baseline
+            << " us |\n";
+
+        report
+            << "| Current | "
+            << fixed
+            << setprecision(2)
+            << current
+            << " us |\n";
+
+        report
+            << "| Change | ";
+
+        if (
+            change >= 0
+        ) {
+            report
+                << "+";
+        }
+
+        report
+            << fixed
+            << setprecision(2)
+            << change
+            << "% |\n";
+
+        report
+            << "| Threshold | "
+            << REGRESSION_THRESHOLD
+            << "% |\n\n";
+
+        report
+            << "## Git\n\n";
+
+        report
+            << "- Baseline commit: `"
+            << baseline_commit
+            << "`\n";
+
+        report
+            << "- Current commit: `"
+            << current_commit
+            << "`\n\n";
+
+        // ----------------------------------------------------
+        // Commit evidence
+        // ----------------------------------------------------
+
+        if (
+            evidence.success
+        ) {
+            report
+                << "## Changed Files\n\n";
+
+            if (
+                evidence.changed_files.empty()
+            ) {
+                report
+                    << "No changed files detected.\n\n";
+            }
+            else {
+                for (
+                    const auto& file :
+                    evidence.changed_files
+                ) {
+                    report
+                        << "- `"
+                        << file
+                        << "`\n";
+                }
+
+                report
+                    << "\n";
+            }
+
+            report
+                << "## Change Summary\n\n";
+
+            report
+                << "- Lines added: "
+                << evidence.lines_added
+                << "\n";
+
+            report
+                << "- Lines removed: "
+                << evidence.lines_removed
+                << "\n\n";
+
+            report
+                << "## Performance Evidence\n\n";
+
+            if (
+                evidence.performance_evidence.empty()
+            ) {
+                report
+                    << "No obvious performance-related "
+                       "changes were detected.\n\n";
+            }
+            else {
+                for (
+                    const auto& line :
+                    evidence.performance_evidence
+                ) {
+                    report
+                        << "```cpp\n"
+                        << line
+                        << "\n"
+                        << "```\n\n";
+                }
+            }
+        }
+        else {
+            report
+                << "## Commit Evidence\n\n";
+
+            report
+                << "Evidence analysis failed: "
+                << evidence.error
+                << "\n\n";
+        }
+
+        // ----------------------------------------------------
+        // Diagnosis
+        // ----------------------------------------------------
+
+        report
+            << "## Diagnosis\n\n";
+
+        if (
+            regression
+        ) {
+            report
+                << "The current benchmark result exceeds "
+                   "the configured regression threshold.\n\n";
+
+            if (
+                evidence.success &&
+                !evidence.performance_evidence.empty()
+            ) {
+                report
+                    << "The commit contains changes that "
+                       "may directly affect benchmark performance.\n\n";
+            }
+        }
+        else {
+            report
+                << "The current benchmark result is within "
+                   "the configured regression threshold.\n\n";
+        }
+
+        report
+            << "## Result\n\n";
+
+        if (
+            regression
+        ) {
+            report
+                << "`REGRESSION`\n";
+        }
+        else {
+            report
+                << "`OK`\n";
+        }
+
+        report.close();
+
+        cout
+            << "\nReport generated:\n"
+            << "  perfguard-report.md\n";
+
+        return regression
+            ? 1
+            : 0;
+    }
     // ========================================================
     // --diagnose <commit>
     //
