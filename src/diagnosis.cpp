@@ -1,4 +1,3 @@
-
 #include "diagnosis.h"
 
 #include <array>
@@ -60,14 +59,6 @@ std::string run_command(
 
 // ============================================================
 // Project root detection
-//
-// Starting from the current working directory, walk upward
-// until we find both:
-//
-//     .git
-//     .perfguard
-//
-// This makes PerfGuard independent of the installation path.
 // ============================================================
 
 bool is_project_root(
@@ -109,8 +100,6 @@ fs::path find_project_root()
 
         fs::path parent =
             current.parent_path();
-
-        // Reached filesystem root.
 
         if (
             parent == current
@@ -167,6 +156,11 @@ void remove_directory(
 
 // ============================================================
 // Cleanup temporary resources
+//
+// Important:
+// Git can keep a worktree registered even after its directory
+// has disappeared. Therefore we prune stale worktrees before
+// and after cleanup.
 // ============================================================
 
 void cleanup(
@@ -176,6 +170,7 @@ void cleanup(
 )
 {
     // --------------------------------------------------------
+    // Step 1
     // Remove build directory
     // --------------------------------------------------------
 
@@ -184,8 +179,26 @@ void cleanup(
     );
 
     // --------------------------------------------------------
-    // Check whether the diagnostic directory is registered
-    // as a Git worktree.
+    // Step 2
+    // Remove stale Git worktree registrations
+    // --------------------------------------------------------
+
+    const std::string prune_command =
+        "git -C \"" +
+        project_root.string() +
+        "\" "
+        "worktree prune";
+
+    int prune_exit_code = 0;
+
+    run_command(
+        prune_command,
+        prune_exit_code
+    );
+
+    // --------------------------------------------------------
+    // Step 3
+    // Check whether diagnostic worktree is registered
     // --------------------------------------------------------
 
     const std::string list_command =
@@ -209,7 +222,8 @@ void cleanup(
         != std::string::npos;
 
     // --------------------------------------------------------
-    // Remove registered Git worktree
+    // Step 4
+    // Remove registered diagnostic worktree
     // --------------------------------------------------------
 
     if (
@@ -234,11 +248,24 @@ void cleanup(
     }
 
     // --------------------------------------------------------
-    // Make absolutely sure the directory is gone.
+    // Step 5
+    // Remove directory itself
     // --------------------------------------------------------
 
     remove_directory(
         worktree
+    );
+
+    // --------------------------------------------------------
+    // Step 6
+    // Final prune
+    // --------------------------------------------------------
+
+    int final_prune_exit_code = 0;
+
+    run_command(
+        prune_command,
+        final_prune_exit_code
     );
 }
 
@@ -285,16 +312,6 @@ bool read_baseline(
     fclose(
         file
     );
-
-    // --------------------------------------------------------
-    // Current baseline format:
-    //
-    // {
-    //     "benchmark": "sort_1m",
-    //     "commit": "e6ba07d",
-    //     "average_us": 62738.50
-    // }
-    // --------------------------------------------------------
 
     static const std::regex pattern(
         R"("average_us"\s*:\s*([0-9.]+))"
@@ -475,14 +492,6 @@ DiagnosisResult diagnose_commit(
     // ========================================================
     // Step 4
     // Create temporary paths
-    //
-    // Example:
-    //
-    // C:\Users\<user>\AppData\Local\Temp\
-    //     perfguard-diagnose
-    //
-    // C:\Users\<user>\AppData\Local\Temp\
-    //     perfguard-diagnose-build
     // ========================================================
 
     fs::path temp_root;
@@ -673,29 +682,25 @@ DiagnosisResult diagnose_commit(
     std::string output;
 
     {
-            const std::string command =
-                "\"" +
-                executable.string() +
-                "\"";
+        const std::string command =
+            "\"" +
+            executable.string() +
+            "\"";
 
-            int exit_code = 0;
+        int exit_code = 0;
 
-            output =
-                run_command(
-                    command,
-                    exit_code
-                );
+        output =
+            run_command(
+                command,
+                exit_code
+            );
 
-            // The benchmark returns exit code 1 when a
-            // performance regression is detected.
-            //
-            // Therefore, a non-zero benchmark exit code does
-            // not necessarily mean that benchmark execution failed.
-            //
-            // We determine whether execution succeeded by checking
-            // whether a valid benchmark average can be parsed below.
+        // The benchmark may return exit code 1 when a
+        // performance regression is detected.
+        //
+        // A valid benchmark average is sufficient to determine
+        // whether benchmark execution succeeded.
     }
-    
 
     // ========================================================
     // Step 11
@@ -772,4 +777,3 @@ DiagnosisResult diagnose_commit(
 
     return result;
 }
-
