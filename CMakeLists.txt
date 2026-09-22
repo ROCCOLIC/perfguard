@@ -9,4 +9,5 @@ add_executable(perfguard
     src/main.cpp
     src/evidence.cpp
     src/diagnosis.cpp
+    src/bisect.cpp
 )

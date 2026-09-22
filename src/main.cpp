@@ -14,7 +14,7 @@
 #include <array>
 #include "evidence.h"
 #include "diagnosis.h"
-
+#include "bisect.h"
 using namespace std;
 
 // ============================================================
@@ -588,7 +588,43 @@ int main(
     //
     // Full performance regression diagnosis.
     // ========================================================
+    if (
+        argc >= 2 &&
+        string(argv[1]) == "--bisect"
+    ) {
+        const BisectResult result =
+            run_bisect();
 
+        if (!result.output.empty()) {
+            cout << result.output;
+        }
+
+        if (!result.success) {
+            cerr
+                << "Bisect failed: "
+                << result.error
+                << '\n';
+
+            return 1;
+        }
+
+        cout << '\n';
+        cout
+            << "========================================\n";
+
+        cout
+            << "First Bad Commit\n";
+
+        cout
+            << "========================================\n";
+
+        cout
+            << "Commit: "
+            << result.first_bad_commit
+            << '\n';
+
+        return 0;
+    }
     if (
         argc >= 3 &&
         string(argv[1]) ==
