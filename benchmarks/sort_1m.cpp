@@ -3,7 +3,7 @@
 #include <iostream>
 #include <random>
 #include <vector>
-
+#include<thread>
 using namespace std;
 
 const int BENCHMARK_SIZE = 1'000'000;
@@ -41,7 +41,9 @@ double run_benchmark()
             data.begin(),
             data.end()
         );
-
+        this_thread::sleep_for(
+            chrono::milliseconds(20)
+        );
         auto end =
             chrono::high_resolution_clock::now();
 
