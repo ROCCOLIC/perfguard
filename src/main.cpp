@@ -1599,10 +1599,12 @@ int main(
     // Exit codes:
     //
     //   0 = no regression
-    //   1 = regression detected, or analysis failed
+    //   1 = regression detected
+    //   2 = a step failed, or the stored baseline cannot be compared
     //
-    // The two cases share exit code 1, matching --check,
-    // --report, and --simulate-regression.
+    // A detected regression is an answer; a failed step is not, so
+    // they do not share a code. Matches --check, --report and
+    // --simulate-regression.
     // ========================================================
 
     if (
