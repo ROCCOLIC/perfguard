@@ -3,11 +3,12 @@
 #include <iostream>
 #include <random>
 #include <vector>
-#include<thread>
-using namespace std;
+#include <thread>
 
-const int BENCHMARK_SIZE = 1'000'000;
-const int BENCHMARK_RUNS = 10;
+#include "perfguard_config.h"
+
+using namespace std;
+using namespace perfguard;
 
 double run_benchmark()
 {

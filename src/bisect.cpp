@@ -1,180 +1,226 @@
 #include "bisect.h"
 
-#include <array>
-#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <regex>
-#include <sstream>
 #include <string>
 
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+
+#include "core.h"
+#include "perfguard_config.h"
+
 using namespace std;
+using namespace perfguard;
 
 namespace fs = std::filesystem;
 
-// ============================================================
-// Configuration
-// ============================================================
-
-const double DEFAULT_THRESHOLD = 10.0;
-
-const fs::path BISECT_BUILD_DIR =
-    "C:/perfguard-bisect-build";
+namespace {
 
 // ============================================================
-// Utility
+// Build directory guard
+//
+// This executable runs once per Git bisect step, so every one of
+// its exit paths must take the build directory with it. Nothing
+// else is left to clean up afterwards.
 // ============================================================
 
-struct CommandResult
+struct BuildDirectoryGuard
 {
-    int exit_code = -1;
-    string output;
+    fs::path path;
+
+    ~BuildDirectoryGuard()
+    {
+        error_code error;
+
+        fs::remove_all(
+            path,
+            error
+        );
+    }
 };
 
-CommandResult run_command(
-    const string& command
+
+// ============================================================
+// Bisect session guard
+//
+// `git bisect` moves HEAD and keeps its state inside .git, so a run
+// that ends early leaves the repository in the middle of a bisect:
+// parked on some commit, with the branch it started from recorded
+// only in Git's own files. The guard refuses to start on top of a
+// session it did not begin, and puts HEAD back however this process
+// exits -- including the paths that do not run destructors.
+// ============================================================
+
+bool bisect_in_progress(
+    const fs::path& root
 )
 {
-    CommandResult result;
-
-    string full_command =
-        command + " 2>&1";
-
-    FILE* pipe =
-        _popen(
-            full_command.c_str(),
-            "r"
+    const CommandResult result =
+        run_command(
+            "git -C \"" +
+            root.string() +
+            "\" rev-parse --git-path BISECT_START",
+            false
         );
 
-    if (pipe == nullptr)
-    {
-        result.output =
-            "Failed to start command.";
-
-        return result;
-    }
-
-    array<char, 4096> buffer{};
-
-    while (
-        fgets(
-            buffer.data(),
-            static_cast<int>(buffer.size()),
-            pipe
-        ) != nullptr
-    )
-    {
-        result.output +=
-            buffer.data();
-    }
-
-    result.exit_code =
-        _pclose(pipe);
-
-    return result;
-}
-
-// ============================================================
-// String helpers
-// ============================================================
-
-string trim(
-    string value
-)
-{
-    while (
-        !value.empty() &&
-        (
-            value.back() == '\n' ||
-            value.back() == '\r' ||
-            value.back() == ' ' ||
-            value.back() == '\t'
-        )
-    )
-    {
-        value.pop_back();
-    }
-
-    size_t start = 0;
-
-    while (
-        start < value.size() &&
-        (
-            value[start] == ' ' ||
-            value[start] == '\t'
-        )
-    )
-    {
-        ++start;
-    }
-
-    return value.substr(start);
-}
-
-bool is_hex_commit(
-    const string& commit
-)
-{
     if (
-        commit.size() < 7 ||
-        commit.size() > 64
-    )
-    {
+        result.exit_code != 0
+    ) {
         return false;
     }
 
-    for (char c : commit)
-    {
-        if (!(
-            (c >= '0' && c <= '9') ||
-            (c >= 'a' && c <= 'f') ||
-            (c >= 'A' && c <= 'F')
-        ))
-        {
-            return false;
-        }
+    const string path =
+        trim(result.output);
+
+    if (
+        path.empty()
+    ) {
+        return false;
     }
 
-    return true;
+    error_code error;
+
+    return fs::exists(
+        fs::path(path),
+        error
+    );
 }
 
-// ============================================================
-// Project root
-// ============================================================
 
-bool is_project_root(
-    const fs::path& path
+string read_revision(
+    const fs::path& root,
+    const string& revision
 )
 {
-    return
-        fs::exists(path / ".git") &&
-        fs::exists(path / "CMakeLists.txt");
-}
+    const CommandResult result =
+        run_command(
+            "git -C \"" +
+            root.string() +
+            "\" rev-parse " +
+            revision,
+            false
+        );
 
-fs::path find_project_root()
-{
-    fs::path current =
-        fs::current_path();
-
-    while (true)
-    {
-        if (is_project_root(current))
-        {
-            return current;
-        }
-
-        if (current == current.root_path())
-        {
-            break;
-        }
-
-        current =
-            current.parent_path();
+    if (
+        result.exit_code != 0
+    ) {
+        return string();
     }
 
-    return {};
+    return trim(result.output);
 }
+
+
+// Returns HEAD to where it was. `git bisect reset` checks out the
+// branch that was current when the session began; when that did not
+// happen, the recorded reference is checked out explicitly, so that
+// no failure here can leave the caller standing on a bisect commit.
+void restore_head(
+    const fs::path& root,
+    const string& head,
+    const string& branch
+)
+{
+    run_command(
+        "git -C \"" +
+        root.string() +
+        "\" bisect reset",
+        true
+    );
+
+    if (
+        head.empty() ||
+        read_revision(root, "HEAD") == head
+    ) {
+        return;
+    }
+
+    // rev-parse --abbrev-ref prints "HEAD" while detached.
+    const string reference =
+        branch.empty() || branch == "HEAD"
+            ? head
+            : branch;
+
+    run_command(
+        "git -C \"" +
+        root.string() +
+        "\" checkout \"" +
+        reference +
+        "\"",
+        true
+    );
+}
+
+
+struct BisectGuard;
+
+// The session being watched over, so that the exit paths which skip
+// destructors can still reset. Cleared by the guard itself, so the
+// handlers below never touch a guard that has gone out of scope.
+BisectGuard* g_active_bisect_guard = nullptr;
+
+
+struct BisectGuard
+{
+    fs::path root;
+    string head;
+    string branch;
+
+    bool active = true;
+
+    ~BisectGuard()
+    {
+        release();
+    }
+
+    void release()
+    {
+        if (
+            !active
+        ) {
+            return;
+        }
+
+        active = false;
+
+        if (
+            g_active_bisect_guard == this
+        ) {
+            g_active_bisect_guard = nullptr;
+        }
+
+        restore_head(root, head, branch);
+    }
+};
+
+
+void reset_interrupted_bisect()
+{
+    if (
+        g_active_bisect_guard != nullptr
+    ) {
+        g_active_bisect_guard->release();
+    }
+}
+
+
+BOOL WINAPI bisect_console_handler(
+    DWORD control_type
+)
+{
+    reset_interrupted_bisect();
+
+    // Returning false lets the default handler end the process; the
+    // repository has already been put back.
+    return FALSE;
+}
+
+} // namespace
 
 // ============================================================
 // Baseline
@@ -256,40 +302,6 @@ bool read_baseline(
 }
 
 // ============================================================
-// Benchmark result parsing
-// ============================================================
-
-bool parse_average(
-    const string& output,
-    double& average
-)
-{
-    regex pattern(
-        R"(Average:\s+([0-9]+(?:\.[0-9]+)?)\s+us)"
-    );
-
-    smatch match;
-
-    if (
-        regex_search(
-            output,
-            match,
-            pattern
-        )
-    )
-    {
-        average =
-            stod(
-                match[1].str()
-            );
-
-        return true;
-    }
-
-    return false;
-}
-
-// ============================================================
 // Bisect test
 //
 // This function is executed by the CURRENT PerfGuard binary.
@@ -313,7 +325,7 @@ int run_bisect_test(
 )
 {
     double baseline_us = 0.0;
-    double threshold = DEFAULT_THRESHOLD;
+    double threshold = DEFAULT_THRESHOLD_PERCENT;
 
     try
     {
@@ -364,15 +376,17 @@ int run_bisect_test(
         << "----------------------------------------\n";
 
     // --------------------------------------------------------
-    // Clean external build directory
+    // External build directory
+    //
+    // Unique to this process, so a concurrently running PerfGuard
+    // cannot be building into the same tree.
     // --------------------------------------------------------
 
-    std::error_code ec;
+    const fs::path build_dir =
+        session_temp_directory() /
+        "bisect-build";
 
-    fs::remove_all(
-        BISECT_BUILD_DIR,
-        ec
-    );
+    const BuildDirectoryGuard build_guard{build_dir};
 
     // --------------------------------------------------------
     // Configure
@@ -385,12 +399,14 @@ int run_bisect_test(
         "cmake -S \"" +
         root.string() +
         "\" -B \"" +
-        BISECT_BUILD_DIR.string() +
+        build_dir.string() +
         "\" -G \"Visual Studio 17 2022\"";
 
     CommandResult configure =
         run_command(
-            configure_command
+            configure_command,
+            true,
+            BUILD_TIMEOUT_MS
         );
 
     if (configure.exit_code != 0)
@@ -413,12 +429,14 @@ int run_bisect_test(
 
     string build_command =
         "cmake --build \"" +
-        BISECT_BUILD_DIR.string() +
+        build_dir.string() +
         "\" --config Debug";
 
     CommandResult build =
         run_command(
-            build_command
+            build_command,
+            true,
+            BUILD_TIMEOUT_MS
         );
 
     if (build.exit_code != 0)
@@ -440,7 +458,7 @@ int run_bisect_test(
         << "[3/3] Running benchmark...\n";
 
     fs::path executable =
-        BISECT_BUILD_DIR /
+        build_dir /
         "Debug" /
         "sort_1m.exe";
 
@@ -459,9 +477,13 @@ int run_bisect_test(
         executable.string() +
         "\"";
 
+    // The average is parsed out of this output, so stderr must not be
+    // merged into it.
     CommandResult benchmark =
         run_command(
-            benchmark_command
+            benchmark_command,
+            false,
+            BENCHMARK_TIMEOUT_MS
         );
 
     // --------------------------------------------------------
@@ -543,39 +565,12 @@ int run_bisect_test(
 }
 
 // ============================================================
-// Extract first bad commit
-// ============================================================
-
-string extract_first_bad_commit(
-    const string& output
-)
-{
-    regex pattern(
-        R"(([0-9a-fA-F]{7,64})\s+is the first bad commit)"
-    );
-
-    smatch match;
-
-    if (
-        regex_search(
-            output,
-            match,
-            pattern
-        )
-    )
-    {
-        return match[1].str();
-    }
-
-    return {};
-}
-
-// ============================================================
 // Automatic Bisect
 // ============================================================
 
 BisectResult run_bisect(
-    const string& executable_path
+    const string& executable_path,
+    bool force
 )
 {
     BisectResult result;
@@ -612,7 +607,7 @@ BisectResult run_bisect(
     }
 
     if (
-        !is_hex_commit(
+        !is_valid_commit_hash(
             result.baseline_commit
         )
     )
@@ -631,7 +626,8 @@ BisectResult run_bisect(
         run_command(
             "git -C \"" +
             root.string() +
-            "\" status --porcelain"
+            "\" status --porcelain",
+            true
         );
 
     if (
@@ -655,14 +651,54 @@ BisectResult run_bisect(
     }
 
     // --------------------------------------------------------
-    // Reset any previous bisect session
+    // Refuse to run on top of a session we did not start
+    //
+    // A bisect in progress belongs to whoever left it there, and
+    // resetting it here would discard their bisect state and move
+    // their HEAD. Only --force clears it.
     // --------------------------------------------------------
 
-    run_command(
-        "git -C \"" +
-        root.string() +
-        "\" bisect reset"
-    );
+    if (
+        bisect_in_progress(root)
+    )
+    {
+        if (
+            !force
+        )
+        {
+            result.error =
+                "A git bisect session is already in progress.\n"
+                "Run: git bisect reset\n"
+                "or pass --force to discard it.";
+
+            return result;
+        }
+
+        run_command(
+            "git -C \"" +
+            root.string() +
+            "\" bisect reset",
+            true
+        );
+    }
+
+    // --------------------------------------------------------
+    // Take responsibility for HEAD from here on
+    // --------------------------------------------------------
+
+    BisectGuard guard;
+
+    guard.root = root;
+    guard.head = read_revision(root, "HEAD");
+    guard.branch = read_revision(root, "--abbrev-ref HEAD");
+
+    g_active_bisect_guard = &guard;
+
+    // The guard's destructor covers an ordinary return; these cover
+    // the exits that do not run destructors, such as Ctrl-C and a
+    // console window being closed.
+    atexit(reset_interrupted_bisect);
+    SetConsoleCtrlHandler(bisect_console_handler, TRUE);
 
     // --------------------------------------------------------
     // Start bisect
@@ -694,7 +730,8 @@ BisectResult run_bisect(
         run_command(
             "git -C \"" +
             root.string() +
-            "\" bisect start"
+            "\" bisect start",
+            true
         );
 
     if (start.exit_code != 0)
@@ -714,17 +751,12 @@ BisectResult run_bisect(
         run_command(
             "git -C \"" +
             root.string() +
-            "\" bisect bad HEAD"
+            "\" bisect bad HEAD",
+            true
         );
 
     if (bad.exit_code != 0)
     {
-        run_command(
-            "git -C \"" +
-            root.string() +
-            "\" bisect reset"
-        );
-
         result.error =
             "Failed to mark HEAD as bad.\n" +
             bad.output;
@@ -741,17 +773,12 @@ BisectResult run_bisect(
             "git -C \"" +
             root.string() +
             "\" bisect good " +
-            result.baseline_commit
+            result.baseline_commit,
+            true
         );
 
     if (good.exit_code != 0)
     {
-        run_command(
-            "git -C \"" +
-            root.string() +
-            "\" bisect reset"
-        );
-
         result.error =
             "Failed to mark baseline as good.\n" +
             good.output;
@@ -783,11 +810,12 @@ BisectResult run_bisect(
         " --bisect-test " +
         to_string(baseline_us) +
         " " +
-        to_string(DEFAULT_THRESHOLD);
+        to_string(DEFAULT_THRESHOLD_PERCENT);
 
     CommandResult bisect =
         run_command(
-            command
+            command,
+            true
         );
 
     result.output =
@@ -803,23 +831,21 @@ BisectResult run_bisect(
         );
 
     // --------------------------------------------------------
-    // Always reset bisect state
+    // Reset bisect state now, so that a failure to get back to the
+    // starting commit is reported rather than only done silently by
+    // the guard.
     // --------------------------------------------------------
 
-    CommandResult reset =
-        run_command(
-            "git -C \"" +
-            root.string() +
-            "\" bisect reset"
-        );
+    guard.release();
 
     if (
-        reset.exit_code != 0
+        !guard.head.empty() &&
+        read_revision(root, "HEAD") != guard.head
     )
     {
         result.error =
-            "Bisect finished but failed to reset Git state.\n" +
-            reset.output;
+            "Bisect finished but the repository was not "
+            "restored to its original HEAD.";
 
         return result;
     }

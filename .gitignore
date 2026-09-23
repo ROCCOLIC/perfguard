@@ -1,3 +1,4 @@
 build/
 .perfguard/
 .vscode/
+perfguard-report.md

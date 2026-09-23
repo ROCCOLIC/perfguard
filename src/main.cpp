@@ -1,7 +1,5 @@
 #include <algorithm>
-#include <array>
 #include <chrono>
-#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -12,11 +10,15 @@
 #include <thread>
 #include <vector>
 
+#include "core.h"
+#include "perfguard_config.h"
 #include "evidence.h"
 #include "diagnosis.h"
 #include "bisect.h"
+#include "measurement.h"
 
 using namespace std;
+using namespace perfguard;
 
 namespace fs = std::filesystem;
 
@@ -25,54 +27,8 @@ namespace fs = std::filesystem;
 // Configuration
 // ============================================================
 
-const int BENCHMARK_SIZE = 1'000'000;
-const int BENCHMARK_RUNS = 10;
-const double REGRESSION_THRESHOLD = 10.0;
-
 const string BASELINE_PATH =
     ".perfguard/baseline.json";
-
-
-// ============================================================
-// Utility
-// ============================================================
-
-string run_git_command(
-    const string& command
-)
-{
-    array<char, 4096> buffer{};
-
-    string result;
-
-    FILE* pipe =
-        _popen(
-            command.c_str(),
-            "r"
-        );
-
-    if (
-        pipe == nullptr
-    ) {
-        return {};
-    }
-
-    while (
-        fgets(
-            buffer.data(),
-            static_cast<int>(buffer.size()),
-            pipe
-        ) != nullptr
-    ) {
-        result += buffer.data();
-    }
-
-    _pclose(
-        pipe
-    );
-
-    return result;
-}
 
 
 // ============================================================
@@ -82,9 +38,10 @@ string run_git_command(
 string get_git_commit()
 {
     string result =
-        run_git_command(
-            "git rev-parse HEAD"
-        );
+        run_command(
+            "git rev-parse HEAD",
+            false
+        ).output;
 
     if (
         result.empty()
@@ -110,138 +67,31 @@ string get_git_commit()
 // Benchmark
 // ============================================================
 
-const string BENCHMARK_EXECUTABLE =
-    "build/Debug/sort_1m.exe";
-
-string run_command(
-    const string& command
+fs::path get_benchmark_executable(
+    const fs::path& perfguard_executable
 )
 {
-    array<char, 4096> buffer{};
-
-    string result;
-
-    FILE* pipe =
-        _popen(
-            command.c_str(),
-            "r"
-        );
-
-    if (
-        pipe == nullptr
-    ) {
-        return {};
-    }
-
-    while (
-        fgets(
-            buffer.data(),
-            static_cast<int>(buffer.size()),
-            pipe
-        ) != nullptr
-    ) {
-        result += buffer.data();
-    }
-
-    _pclose(
-        pipe
-    );
-
-    return result;
+    return
+        perfguard_executable
+            .parent_path()
+        /
+        "sort_1m.exe";
 }
 
-
-bool run_benchmark(
-    double& average
-)
-{
-    fs::path executable =
-        fs::absolute(
-            BENCHMARK_EXECUTABLE
-        );
-
-    if (
-        !fs::exists(
-            executable
-        )
-    ) {
-        cerr
-            << "ERROR: Benchmark executable not found:\n"
-            << "  "
-            << executable.string()
-            << "\n";
-
-        cerr
-            << "\nBuild it with:\n"
-            << "  cmake --build build --config Debug\n";
-
-        return false;
-    }
-
-    string output =
-        run_command(
-            "\"" +
-            executable.string() +
-            "\""
-        );
-
-    if (
-        output.empty()
-    ) {
-        cerr
-            << "ERROR: Benchmark produced no output.\n";
-
-        return false;
-    }
-
-    static const regex pattern(
-        R"(Average:\s*([0-9.]+)\s*us)"
-    );
-
-    smatch match;
-
-    if (
-        !regex_search(
-            output,
-            match,
-            pattern
-        )
-    ) {
-        cerr
-            << "ERROR: Could not parse benchmark output.\n";
-
-        cerr
-            << "\nBenchmark output:\n"
-            << output
-            << "\n";
-
-        return false;
-    }
-
-    try {
-        average =
-            stod(
-                match[1].str()
-            );
-    }
-    catch (...) {
-        cerr
-            << "ERROR: Invalid benchmark average.\n";
-
-        return false;
-    }
-
-    cout
-        << output;
-
-    return average > 0.0;
-}
 
 // ============================================================
 // Artificial regression benchmark
+//
+// Carries its own reference workload rather than borrowing the
+// sort_1m baseline: two different benchmarks have no comparable
+// scale, and comparing them measured the second one as 32% faster
+// than the first, which no slowdown could ever turn into a
+// regression.
 // ============================================================
 
-double run_artificial_regression_benchmark()
+double run_artificial_regression_benchmark(
+    int slowdown_ms
+)
 {
     vector<int> data(
         BENCHMARK_SIZE
@@ -280,7 +130,7 @@ double run_artificial_regression_benchmark()
         // ----------------------------------------------------
 
         this_thread::sleep_for(
-            chrono::milliseconds(10)
+            chrono::milliseconds(slowdown_ms)
         );
 
         auto end =
@@ -317,232 +167,73 @@ void print_benchmark_result(
 
 
 // ============================================================
-// Calculate performance change
-// ============================================================
-
-double calculate_change(
-    double baseline,
-    double current
-)
-{
-    if (
-        baseline <= 0.0
-    ) {
-        return 0.0;
-    }
-
-    return
-        (
-            (
-                current -
-                baseline
-            )
-            /
-            baseline
-        )
-        * 100.0;
-}
-
-
-// ============================================================
 // Baseline
+//
+// A stored measurement describes one machine in one build
+// configuration. Two builds of identical source have been measured
+// several percent apart, which decides a verdict whose threshold is
+// ten percent, so a stored number is only compared when the
+// environment that produced it matches this one.
 // ============================================================
 
-bool create_baseline(
-    double average,
-    const string& commit
+// Loads the stored baseline and checks it against this build.
+//
+// Returns false with a message and an exit code: 2 throughout, because
+// a comparison that cannot be made must not be reported as a verdict.
+bool load_comparable_baseline(
+    Baseline& baseline,
+    string& message,
+    int& exit_code
 )
 {
-    fs::path baseline_path =
-        BASELINE_PATH;
+    exit_code = 2;
 
-    fs::path parent =
-        baseline_path.parent_path();
+    const fs::path project_root =
+        find_project_root();
 
     if (
-        !parent.empty()
+        project_root.empty()
     ) {
-        error_code error;
+        message =
+            "Unable to find the PerfGuard project root. "
+            "Make sure the command is executed inside "
+            "the PerfGuard project directory.";
 
-        fs::create_directories(
-            parent,
+        return false;
+    }
+
+    string error;
+
+    if (
+        !read_baseline(
+            project_root,
+            baseline,
             error
-        );
-
-        if (error) {
-            cerr
-                << "ERROR: Could not create "
-                << parent.string()
-                << "\n";
-
-            return false;
-        }
-    }
-
-    ofstream file(
-        baseline_path
-    );
-
-    if (
-        !file
-    ) {
-        cerr
-            << "ERROR: Could not create baseline file.\n";
-
-        return false;
-    }
-
-    file
-        << "{\n"
-        << "    \"benchmark\": \"sort_1m\",\n"
-        << "    \"commit\": \""
-        << commit
-        << "\",\n"
-        << "    \"average_us\": "
-        << fixed
-        << setprecision(2)
-        << average
-        << "\n"
-        << "}\n";
-
-    file.close();
-
-    cout
-        << "\nBaseline created successfully.\n";
-
-    cout
-        << "File: "
-        << BASELINE_PATH
-        << "\n";
-
-    return true;
-}
-
-
-// ============================================================
-// Load baseline average
-// ============================================================
-
-bool load_baseline_average(
-    double& average
-)
-{
-    if (
-        !fs::exists(
-            BASELINE_PATH
         )
     ) {
+        message =
+            error +
+            "\n  Run:\n"
+            "    perfguard baseline";
+
         return false;
     }
 
-    ifstream file(
-        BASELINE_PATH
-    );
+    string reason;
 
     if (
-        !file
-    ) {
-        return false;
-    }
-
-    string content;
-
-    {
-        stringstream buffer;
-
-        buffer
-            << file.rdbuf();
-
-        content =
-            buffer.str();
-    }
-
-    static const regex pattern(
-        R"PG("average_us"\s*:\s*([0-9.]+))PG"
-    );
-
-    smatch match;
-
-    if (
-        !regex_search(
-            content,
-            match,
-            pattern
+        !baseline_comparable(
+            baseline,
+            reason
         )
     ) {
+        message =
+            reason +
+            "\n  Run:\n"
+            "    perfguard baseline";
+
         return false;
     }
-
-    try {
-        average =
-            stod(
-                match[1].str()
-            );
-    }
-    catch (...) {
-        return false;
-    }
-
-    return average > 0.0;
-}
-
-
-// ============================================================
-// Load baseline commit
-// ============================================================
-
-bool load_baseline_commit(
-    string& commit
-)
-{
-    if (
-        !fs::exists(
-            BASELINE_PATH
-        )
-    ) {
-        return false;
-    }
-
-    ifstream file(
-        BASELINE_PATH
-    );
-
-    if (
-        !file
-    ) {
-        return false;
-    }
-
-    string content;
-
-    {
-        stringstream buffer;
-
-        buffer
-            << file.rdbuf();
-
-        content =
-            buffer.str();
-    }
-
-    static const regex pattern(
-        R"PG("commit"\s*:\s*"([^"]+)")PG"
-    );
-
-    smatch match;
-
-    if (
-        !regex_search(
-            content,
-            match,
-            pattern
-        )
-    ) {
-        return false;
-    }
-
-    commit =
-        match[1].str();
 
     return true;
 }
@@ -655,6 +346,1193 @@ void show_commit_evidence(
 
 
 // ============================================================
+// Measurement summary
+// ============================================================
+
+void print_stats(
+    const string& label,
+    const Stats& stats
+)
+{
+    cout
+        << "\n"
+        << label
+        << ": "
+        << stats.samples
+        << " sample(s)";
+
+    if (
+        stats.outliers_removed > 0
+    ) {
+        cout
+            << ", "
+            << stats.outliers_removed
+            << " outlier(s) removed";
+    }
+    else if (
+        !stats.outlier_check
+    ) {
+        cout
+            << ", too few samples "
+               "for outlier rejection";
+    }
+
+    cout
+        << "\n";
+
+    cout
+        << "  min "
+        << fixed
+        << setprecision(2)
+        << stats.min_us
+        << "  median "
+        << fixed
+        << setprecision(2)
+        << stats.median_us
+        << "  max "
+        << fixed
+        << setprecision(2)
+        << stats.max_us
+        << "  stdev "
+        << fixed
+        << setprecision(2)
+        << stats.stdev_us
+        << " us\n";
+}
+
+
+// ============================================================
+// Command line
+// ============================================================
+
+struct Options
+{
+    bool json = false;
+    bool help = false;
+    bool version = false;
+
+    // --bisect clears a bisect session it finds already running, which
+    // otherwise stops it: the session belongs to whoever left it.
+    bool force = false;
+
+    // Set when an option could not be understood. The message is
+    // reported and usage printed instead of running anything.
+    string error;
+
+    double threshold_percent =
+        DEFAULT_THRESHOLD_PERCENT;
+
+    // Samples to take, 0 meaning the mode's own default.
+    int runs = 0;
+
+    vector<string> arguments;
+};
+
+
+string usage_text()
+{
+    return
+        "PerfGuard - performance regression detection\n"
+        "\n"
+        "Usage:\n"
+        "  perfguard <command> [arguments] [options]\n"
+        "\n"
+        "Commands:\n"
+        "  baseline                 Measure the current tree and store it\n"
+        "                           as the baseline to compare against\n"
+        "  --check                  Build and measure both the baseline\n"
+        "                           commit and HEAD, then compare medians\n"
+        "  --report                 Compare the stored baseline against a\n"
+        "                           fresh measurement, and write a report\n"
+        "  --analyze                Check, bisect, diagnose and report\n"
+        "  --bisect                 Find the first bad commit\n"
+        "  --diagnose <commit>      Build one commit and compare it\n"
+        "  --evidence <commit>      Show what a commit changed\n"
+        "  --simulate-regression    Self-test: inject a slowdown and look\n"
+        "                           for it\n"
+        "  --bisect-test <us> <pct> Internal: one git bisect step\n"
+        "  --help, -h               Show this text\n"
+        "  --version, -V            Show the version\n"
+        "\n"
+        "Options:\n"
+        "  --threshold <percent>    Regression threshold (default 10)\n"
+        "  --runs <n>               Samples to take (default: per command)\n"
+        "  --force                  --bisect: discard a bisect session that\n"
+        "                           is already in progress\n"
+        "  --json                   Machine-readable output on stdout\n"
+        "                           (supported by baseline, the plain\n"
+        "                           benchmark run, --check and --diagnose)\n"
+        "\n"
+        "Exit codes:\n"
+        "  0  no regression\n"
+        "  1  regression detected\n"
+        "  2  error, or the stored baseline cannot be compared\n"
+        "\n"
+        "  --bisect-test is an internal step of git bisect and keeps its\n"
+        "  own contract: 0 = good, 1 = bad, 125 = skip.\n";
+}
+
+
+// The commands this tool accepts, so that a leading dash can still
+// mean "unknown option" for anything else.
+bool is_known_command(
+    const string& argument
+)
+{
+    static const char* COMMANDS[] = {
+        "baseline",
+        "--check",
+        "--report",
+        "--analyze",
+        "--bisect",
+        "--diagnose",
+        "--evidence",
+        "--simulate-regression",
+        "--bisect-test"
+    };
+
+    for (
+        const char* command :
+        COMMANDS
+    ) {
+        if (
+            argument == command
+        ) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+
+// Parses the whole command line in one pass, so that options may be
+// written before or after the command: "perfguard --check --threshold 5"
+// and "perfguard --threshold 5 --check" mean the same thing.
+Options parse_options(
+    int argc,
+    char* argv[]
+)
+{
+    Options options;
+
+    for (
+        int index = 1;
+        index < argc;
+        ++index
+    ) {
+        const string argument =
+            argv[index];
+
+        if (
+            argument == "--json"
+        ) {
+            options.json = true;
+
+            continue;
+        }
+
+        if (
+            argument == "--force"
+        ) {
+            options.force = true;
+
+            continue;
+        }
+
+        if (
+            argument == "--help" ||
+            argument == "-h"
+        ) {
+            options.help = true;
+
+            continue;
+        }
+
+        if (
+            argument == "--version" ||
+            argument == "-V" ||
+            argument == "-v"
+        ) {
+            options.version = true;
+
+            continue;
+        }
+
+        if (
+            argument == "--threshold" ||
+            argument == "--runs"
+        ) {
+            if (
+                index + 1 >= argc
+            ) {
+                options.error =
+                    argument +
+                    " needs a value.";
+
+                return options;
+            }
+
+            const string value =
+                argv[++index];
+
+            try {
+                if (
+                    argument == "--threshold"
+                ) {
+                    options.threshold_percent =
+                        stod(value);
+                }
+                else {
+                    options.runs =
+                        stoi(value);
+                }
+            }
+            catch (...) {
+                options.error =
+                    argument +
+                    " was given \"" +
+                    value +
+                    "\", which is not a number.";
+
+                return options;
+            }
+
+            if (
+                argument == "--threshold" &&
+                options.threshold_percent <= 0.0
+            ) {
+                options.error =
+                    "--threshold must be positive.";
+
+                return options;
+            }
+
+            if (
+                argument == "--runs" &&
+                options.runs <= 0
+            ) {
+                options.error =
+                    "--runs must be positive.";
+
+                return options;
+            }
+
+            continue;
+        }
+
+        // A command, an argument to one (a commit hash), or a word
+        // that means nothing to this tool.
+        if (
+            argument.size() > 1 &&
+            argument[0] == '-' &&
+            !is_known_command(argument)
+        ) {
+            options.error =
+                "Unknown option \"" +
+                argument +
+                "\".";
+
+            return options;
+        }
+
+        options.arguments.push_back(
+            argument
+        );
+    }
+
+    return options;
+}
+
+
+// ============================================================
+// JSON output
+//
+// Written by hand, like the baseline it describes: the shape is
+// small and fixed, and a JSON dependency would have to be built by
+// both this tool and the standalone benchmark.
+// ============================================================
+
+class JsonObject
+{
+public:
+
+    void string_field(
+        const string& key,
+        const string& value
+    ) {
+        add_scalar(
+            key,
+            "\"" + json_escape(value) + "\""
+        );
+    }
+
+    void number_field(
+        const string& key,
+        double value
+    ) {
+        ostringstream text;
+
+        text
+            << fixed
+            << setprecision(2)
+            << value;
+
+        add_scalar(key, text.str());
+    }
+
+    void int_field(
+        const string& key,
+        int value
+    ) {
+        add_scalar(
+            key,
+            to_string(value)
+        );
+    }
+
+    void bool_field(
+        const string& key,
+        bool value
+    ) {
+        add_scalar(
+            key,
+            value ? "true" : "false"
+        );
+    }
+
+    // The nested object is kept whole rather than serialized here: how
+    // deep it sits in the document is not known until the document is
+    // written, and it decides how far its fields are indented.
+    void object_field(
+        const string& key,
+        JsonObject nested
+    ) {
+        Field field;
+
+        field.key = key;
+        field.nested_index =
+            static_cast<int>(
+                nested_objects.size()
+            );
+
+        fields.push_back(field);
+
+        nested_objects.push_back(
+            move(nested)
+        );
+    }
+
+    string dump(
+        int depth = 0
+    ) const
+    {
+        if (
+            fields.empty()
+        ) {
+            return "{}";
+        }
+
+        const string indent(
+            static_cast<size_t>(depth) * 4,
+            ' '
+        );
+
+        const string inner(
+            static_cast<size_t>(depth + 1) * 4,
+            ' '
+        );
+
+        string result = "{\n";
+
+        for (
+            size_t index = 0;
+            index < fields.size();
+            ++index
+        ) {
+            const Field& field =
+                fields[index];
+
+            const string value =
+                field.nested_index >= 0
+                    ? nested_objects[
+                        static_cast<size_t>(
+                            field.nested_index
+                        )
+                    ].dump(depth + 1)
+                    : field.text;
+
+            result +=
+                inner +
+                "\"" +
+                field.key +
+                "\": " +
+                value;
+
+            if (
+                index + 1 < fields.size()
+            ) {
+                result += ",";
+            }
+
+            result += "\n";
+        }
+
+        result += indent + "}";
+
+        return result;
+    }
+
+private:
+
+    struct Field
+    {
+        string key;
+
+        // Empty when the field holds a nested object, which is
+        // identified by nested_index instead.
+        string text;
+        int nested_index = -1;
+    };
+
+    void add_scalar(
+        const string& key,
+        const string& text
+    ) {
+        Field field;
+
+        field.key = key;
+        field.text = text;
+
+        fields.push_back(field);
+    }
+
+    vector<Field> fields;
+    vector<JsonObject> nested_objects;
+};
+
+
+JsonObject stats_json(
+    const Stats& stats
+)
+{
+    JsonObject object;
+
+    object.int_field("samples", stats.samples);
+    object.number_field("min_us", stats.min_us);
+    object.number_field("median_us", stats.median_us);
+    object.number_field("mean_us", stats.mean_us);
+    object.number_field("max_us", stats.max_us);
+    object.number_field("stdev_us", stats.stdev_us);
+    object.int_field(
+        "outliers_removed",
+        stats.outliers_removed
+    );
+    object.bool_field(
+        "outlier_check_applied",
+        stats.outlier_check
+    );
+
+    return object;
+}
+
+
+JsonObject metadata_json(
+    const Baseline& baseline
+)
+{
+    JsonObject object;
+
+    object.string_field("os", baseline.os);
+    object.string_field("cpu", baseline.cpu);
+    object.int_field("cpu_count", baseline.cpu_count);
+    object.string_field("compiler", baseline.compiler);
+    object.string_field("build_type", baseline.build_type);
+    object.string_field(
+        "cmake_generator",
+        baseline.cmake_generator
+    );
+    object.string_field("timestamp", baseline.timestamp);
+    object.string_field(
+        "perfguard_version",
+        baseline.perfguard_version
+    );
+
+    return object;
+}
+
+
+// Current environment, taken from this build. The measurements are
+// filled in by the caller.
+Baseline environment_baseline()
+{
+    Baseline baseline;
+
+    fill_environment_metadata(baseline);
+
+    return baseline;
+}
+
+
+// With --json, stdout carries the document alone, so everything a
+// mode narrates is sent to stderr instead: still visible on a
+// terminal, never mixed into the stream a CI job parses.
+class HumanOutputGuard
+{
+public:
+
+    explicit HumanOutputGuard(
+        bool redirect
+    )
+    {
+        if (
+            redirect
+        ) {
+            saved =
+                cout.rdbuf(
+                    cerr.rdbuf()
+                );
+        }
+    }
+
+    // Called just before the document is written.
+    void restore()
+    {
+        if (
+            saved != nullptr
+        ) {
+            cout.rdbuf(saved);
+
+            saved = nullptr;
+        }
+    }
+
+    ~HumanOutputGuard()
+    {
+        restore();
+    }
+
+private:
+
+    streambuf* saved = nullptr;
+};
+
+
+// Emits a JSON object and reports whether anything was written.
+bool emit_json(
+    HumanOutputGuard& guard,
+    const JsonObject& object
+)
+{
+    guard.restore();
+
+    cout
+        << object.dump()
+        << "\n";
+
+    return true;
+}
+
+
+int fail_with_json(
+    const Options& options,
+    const string& command,
+    const string& message
+)
+{
+    if (
+        options.json
+    ) {
+        JsonObject object;
+
+        object.string_field("command", command);
+        object.string_field("status", "error");
+        object.string_field("message", message);
+
+        cout << object.dump() << "\n";
+    }
+
+    return 2;
+}
+
+
+// ============================================================
+// baseline
+//
+// Measures the working tree and stores the result, together with the
+// environment it was measured in.
+// ============================================================
+
+int run_baseline_mode(
+    const Options& options,
+    const fs::path& benchmark_executable
+)
+{
+    HumanOutputGuard guard(options.json);
+
+    const fs::path project_root =
+        find_project_root();
+
+    if (
+        project_root.empty()
+    ) {
+        cerr
+            << "ERROR: Unable to find the PerfGuard project root. "
+               "Make sure the command is executed inside "
+               "the PerfGuard project directory.\n";
+
+        return fail_with_json(
+            options,
+            "baseline",
+            "Unable to find the PerfGuard project root."
+        );
+    }
+
+    const int samples =
+        options.runs > 0
+            ? options.runs
+            : BASELINE_SAMPLES;
+
+    cout
+        << "Measuring "
+        << samples
+        << " samples of the working tree.\n";
+
+    Stats stats;
+    string error;
+
+    if (
+        !measure(
+            benchmark_executable,
+            samples,
+            1,
+            stats,
+            error
+        )
+    ) {
+        cerr
+            << "ERROR: "
+            << error
+            << "\n";
+
+        return fail_with_json(
+            options,
+            "baseline",
+            error
+        );
+    }
+
+    Baseline baseline =
+        environment_baseline();
+
+    baseline.benchmark =
+        BENCHMARK_NAME;
+
+    baseline.commit =
+        get_git_commit();
+
+    baseline.average_us =
+        stats.mean_us;
+
+    baseline.median_us =
+        stats.median_us;
+
+    baseline.stdev_us =
+        stats.stdev_us;
+
+    baseline.min_us =
+        stats.min_us;
+
+    baseline.max_us =
+        stats.max_us;
+
+    baseline.runs =
+        stats.samples;
+
+    baseline.warmup_runs = 1;
+
+    if (
+        baseline.commit.empty()
+    ) {
+        cerr
+            << "ERROR: Could not read the current commit.\n";
+
+        return fail_with_json(
+            options,
+            "baseline",
+            "Could not read the current commit."
+        );
+    }
+
+    if (
+        !write_baseline(
+            project_root,
+            baseline,
+            error
+        )
+    ) {
+        cerr
+            << "ERROR: "
+            << error
+            << "\n";
+
+        return fail_with_json(
+            options,
+            "baseline",
+            error
+        );
+    }
+
+    if (
+        options.json
+    ) {
+        JsonObject object;
+
+        object.string_field("command", "baseline");
+        object.string_field("status", "ok");
+        object.string_field("benchmark", baseline.benchmark);
+        object.string_field("commit", baseline.commit);
+        object.number_field("median_us", baseline.median_us);
+        object.number_field("mean_us", baseline.average_us);
+        object.number_field("stdev_us", baseline.stdev_us);
+        object.int_field("runs", baseline.runs);
+        object.object_field(
+            "stats",
+            stats_json(stats)
+        );
+        object.object_field(
+            "metadata",
+            metadata_json(baseline)
+        );
+
+        emit_json(guard, object);
+
+        return 0;
+    }
+
+    cout
+        << "\nBaseline created successfully.\n";
+
+    cout
+        << "File: "
+        << BASELINE_PATH
+        << "\n";
+
+    cout
+        << "Commit: "
+        << baseline.commit
+        << "\n";
+
+    print_stats("Baseline", stats);
+
+    return 0;
+}
+
+
+// ============================================================
+// --check
+//
+// Both sides are built and measured inside this one run.
+//
+// The stored measurement was taken in a build directory that no
+// longer exists, and identical source built in two different
+// directories has been measured several percent apart. That is
+// enough to decide the verdict when the slowdown being looked for
+// is itself only about ten percent, so the stored number is used
+// only for the commit it names; both figures come from this run.
+//
+// Exit codes: 0 = no regression, 1 = regression, 2 = error.
+// ============================================================
+
+int run_check_mode(
+    const Options& options
+)
+{
+    HumanOutputGuard guard(options.json);
+
+    Baseline baseline;
+    string message;
+    int exit_code = 2;
+
+    if (
+        !load_comparable_baseline(
+            baseline,
+            message,
+            exit_code
+        )
+    ) {
+        cerr
+            << "ERROR: "
+            << message
+            << "\n";
+
+        return fail_with_json(
+            options,
+            "check",
+            message
+        );
+    }
+
+    const string baseline_commit =
+        baseline.commit;
+
+    if (
+        !is_valid_commit_hash(
+            baseline_commit
+        )
+    ) {
+        cerr
+            << "ERROR: The baseline names \""
+            << baseline_commit
+            << "\", which is not a commit hash.\n";
+
+        return fail_with_json(
+            options,
+            "check",
+            "The baseline names a commit that is not a commit hash."
+        );
+    }
+
+    const string current_commit =
+        get_git_commit();
+
+    if (
+        current_commit.empty()
+    ) {
+        cerr
+            << "ERROR: Could not read the current commit.\n";
+
+        return fail_with_json(
+            options,
+            "check",
+            "Could not read the current commit."
+        );
+    }
+
+    cout
+        << "\nPerfGuard Check\n";
+
+    cout
+        << "===============\n";
+
+    cout
+        << "Baseline Commit: "
+        << baseline_commit
+        << "\n";
+
+    cout
+        << "Current Commit:  "
+        << current_commit
+        << "\n";
+
+    // --------------------------------------------------------
+    // Build both sides
+    // --------------------------------------------------------
+
+    string error;
+
+    cout
+        << "\nBuilding the baseline commit...\n";
+
+    BuildArtifacts baseline_build;
+
+    if (
+        !prepare_build(
+            baseline_commit,
+            baseline_build,
+            error
+        )
+    ) {
+        cerr
+            << "\nERROR: "
+            << error
+            << "\n";
+
+        if (
+            !baseline_build.build_log.empty()
+        ) {
+            cerr
+                << baseline_build.build_log;
+        }
+
+        release_build(baseline_build);
+
+        return fail_with_json(
+            options,
+            "check",
+            error
+        );
+    }
+
+    cout
+        << "Building the current commit...\n";
+
+    BuildArtifacts current_build;
+
+    if (
+        !prepare_build(
+            current_commit,
+            current_build,
+            error
+        )
+    ) {
+        cerr
+            << "\nERROR: "
+            << error
+            << "\n";
+
+        if (
+            !current_build.build_log.empty()
+        ) {
+            cerr
+                << current_build.build_log;
+        }
+
+        release_build(
+            baseline_build
+        );
+
+        release_build(
+            current_build
+        );
+
+        return fail_with_json(
+            options,
+            "check",
+            error
+        );
+    }
+
+    // --------------------------------------------------------
+    // Measure both, alternating
+    // --------------------------------------------------------
+
+    const int samples_per_side =
+        options.runs > 0
+            ? options.runs
+            : CHECK_SAMPLES_PER_SIDE;
+
+    cout
+        << "\nMeasuring "
+        << samples_per_side
+        << " samples per side, alternating.\n";
+
+    cout
+        << "Each sample runs the benchmark "
+        << BENCHMARK_RUNS
+        << " times, so this takes a few minutes.\n";
+
+    Stats baseline_stats;
+    Stats current_stats;
+
+    const bool measured =
+        measure_interleaved(
+            baseline_build.executable,
+            current_build.executable,
+            samples_per_side,
+            1,
+            baseline_stats,
+            current_stats,
+            error
+        );
+
+    release_build(
+        current_build
+    );
+
+    release_build(
+        baseline_build
+    );
+
+    if (
+        !measured
+    ) {
+        cerr
+            << "\nERROR: "
+            << error
+            << "\n";
+
+        return fail_with_json(
+            options,
+            "check",
+            error
+        );
+    }
+
+    // --------------------------------------------------------
+    // Verdict
+    // --------------------------------------------------------
+
+    const double change =
+        calculate_change(
+            baseline_stats.median_us,
+            current_stats.median_us
+        );
+
+    const bool regression =
+        change >
+        options.threshold_percent;
+
+    const Baseline environment =
+        environment_baseline();
+
+    if (
+        options.json
+    ) {
+        JsonObject object;
+
+        object.string_field(
+            "command",
+            "check"
+        );
+        object.string_field(
+            "status",
+            regression
+                ? "regression"
+                : "ok"
+        );
+        object.string_field(
+            "baseline_commit",
+            baseline_commit
+        );
+        object.string_field(
+            "current_commit",
+            current_commit
+        );
+        object.number_field(
+            "baseline_median_us",
+            baseline_stats.median_us
+        );
+        object.number_field(
+            "current_median_us",
+            current_stats.median_us
+        );
+        object.number_field(
+            "change_percent",
+            change
+        );
+        object.number_field(
+            "threshold_percent",
+            options.threshold_percent
+        );
+
+        JsonObject stats;
+
+        stats.object_field(
+            "baseline",
+            stats_json(baseline_stats)
+        );
+        stats.object_field(
+            "current",
+            stats_json(current_stats)
+        );
+
+        object.object_field("stats", stats);
+        object.object_field(
+            "metadata",
+            metadata_json(environment)
+        );
+
+        emit_json(guard, object);
+
+        return regression ? 1 : 0;
+    }
+
+    cout
+        << "\nBaseline Median: "
+        << fixed
+        << setprecision(2)
+        << baseline_stats.median_us
+        << " us\n";
+
+    cout
+        << "Current Median:  "
+        << fixed
+        << setprecision(2)
+        << current_stats.median_us
+        << " us\n";
+
+    cout
+        << "Change:          ";
+
+    if (
+        change >= 0
+    ) {
+        cout
+            << "+";
+    }
+
+    cout
+        << fixed
+        << setprecision(2)
+        << change
+        << "%\n";
+
+    cout
+        << "Threshold:       "
+        << options.threshold_percent
+        << "%\n";
+
+    print_stats(
+        "Baseline",
+        baseline_stats
+    );
+
+    print_stats(
+        "Current",
+        current_stats
+    );
+
+    cout
+        << "\n";
+
+    if (
+        regression
+    ) {
+        cout
+            << "Result: REGRESSION\n";
+
+        return 1;
+    }
+
+    cout
+        << "Result: OK\n";
+
+    return 0;
+}
+
+
+// ============================================================
+// Working-tree measurement
+//
+// The figure a fresh run of the working tree reports. Measured the
+// way a baseline is, so the two are described by the same statistic
+// and can be compared directly.
+// ============================================================
+
+bool measure_working_tree(
+    const Options& options,
+    const fs::path& benchmark_executable,
+    Stats& stats,
+    string& error
+)
+{
+    const int samples =
+        options.runs > 0
+            ? options.runs
+            : BASELINE_SAMPLES;
+
+    return measure(
+        benchmark_executable,
+        samples,
+        1,
+        stats,
+        error
+    );
+}
+
+
+// ============================================================
 // Main
 // ============================================================
 
@@ -662,7 +1540,51 @@ int main(
     int argc,
     char* argv[]
 )
-{    
+{
+    // Resolve the benchmark next to the running PerfGuard executable.
+    const fs::path perfguard_executable =
+        fs::absolute(argv[0]);
+
+    const fs::path benchmark_executable =
+        get_benchmark_executable(perfguard_executable);
+
+    const Options options =
+        parse_options(argc, argv);
+
+    if (
+        !options.error.empty()
+    ) {
+        cerr
+            << "ERROR: "
+            << options.error
+            << "\n\n";
+
+        cout
+            << usage_text();
+
+        return 2;
+    }
+
+    if (
+        options.help
+    ) {
+        cout
+            << usage_text();
+
+        return 0;
+    }
+
+    if (
+        options.version
+    ) {
+        cout
+            << "PerfGuard "
+            << PERFGUARD_VERSION
+            << "\n";
+
+        return 0;
+    }
+
     // ========================================================
     // --analyze
     //
@@ -673,11 +1595,19 @@ int main(
     //   3. Automatically bisect Git history
     //   4. Diagnose first bad commit
     //   5. Generate Markdown report
+    //
+    // Exit codes:
+    //
+    //   0 = no regression
+    //   1 = regression detected, or analysis failed
+    //
+    // The two cases share exit code 1, matching --check,
+    // --report, and --simulate-regression.
     // ========================================================
 
     if (
-        argc >= 2 &&
-        string(argv[1]) ==
+        options.arguments.size() >= 1 &&
+        options.arguments[0] ==
             "--analyze"
     )
     {
@@ -698,36 +1628,54 @@ int main(
         cout
             << "[1/4] Detecting performance regression...\n\n";
 
-        double baseline =
-            0.0;
+        Baseline stored_baseline;
+        string baseline_message;
 
-        string baseline_commit;
+        int baseline_exit_code = 2;
 
         if (
-            !load_baseline_average(
-                baseline
+            !load_comparable_baseline(
+                stored_baseline,
+                baseline_message,
+                baseline_exit_code
             )
         ) {
             cerr
-                << "ERROR: Could not read baseline.\n";
+                << "ERROR: "
+                << baseline_message
+                << "\n";
 
-            return 1;
+            return baseline_exit_code;
         }
 
-        load_baseline_commit(
-            baseline_commit
-        );
+        const double baseline =
+            stored_baseline.median_us;
 
-        double current =
-            0.0;
+        const string baseline_commit =
+            stored_baseline.commit;
+
+        Stats measurement;
+
+        string measurement_error;
 
         if (
-            !run_benchmark(
-                current
+            !measure_working_tree(
+                options,
+                benchmark_executable,
+                measurement,
+                measurement_error
             )
         ) {
-            return 1;
+            cerr
+                << "ERROR: "
+                << measurement_error
+                << "\n";
+
+            return 2;
         }
+
+        const double current =
+            measurement.median_us;
 
         double change =
             calculate_change(
@@ -767,7 +1715,7 @@ int main(
 
         cout
             << "Threshold: "
-            << REGRESSION_THRESHOLD
+            << options.threshold_percent
             << "%\n";
 
 
@@ -777,7 +1725,7 @@ int main(
 
         if (
             change <=
-            REGRESSION_THRESHOLD
+            options.threshold_percent
         ) {
             cout
                 << "\nResult: OK\n";
@@ -800,14 +1748,10 @@ int main(
         cout
             << "[2/4] Finding first bad commit...\n\n";
 
-        fs::path executable_path =
-            fs::absolute(
-                argv[0]
-            );
-
         BisectResult bisect_result =
             run_bisect(
-                executable_path.string()
+                perfguard_executable.string(),
+                options.force
             );
 
         if (
@@ -825,7 +1769,7 @@ int main(
                 << bisect_result.error
                 << "\n";
 
-            return 1;
+            return 2;
         }
 
         const string first_bad_commit =
@@ -838,7 +1782,7 @@ int main(
                 << "\nBisect did not return "
                    "a first bad commit.\n";
 
-            return 1;
+            return 2;
         }
 
         cout
@@ -867,12 +1811,15 @@ int main(
                 << evidence.error
                 << "\n";
 
-            return 1;
+            return 2;
         }
 
         DiagnosisResult diagnosis =
             diagnose_commit(
-                first_bad_commit
+                first_bad_commit,
+                options.runs > 0 ? options.runs : 1,
+                options.runs > 0 ? 1 : 0,
+                options.threshold_percent
             );
 
         if (
@@ -883,7 +1830,16 @@ int main(
                 << diagnosis.error
                 << "\n";
 
-            return 1;
+            if (
+                !diagnosis.build_log.empty()
+            ) {
+                cerr
+                    << "\n--- Build output ---\n"
+                    << diagnosis.build_log
+                    << "\n--------------------\n";
+            }
+
+            return 2;
         }
 
 
@@ -905,7 +1861,7 @@ int main(
                 << "ERROR: Could not create "
                    "perfguard-report.md\n";
 
-            return 1;
+            return 2;
         }
 
         report
@@ -960,7 +1916,7 @@ int main(
 
         report
             << "| Threshold | "
-            << REGRESSION_THRESHOLD
+            << options.threshold_percent
             << "% |\n\n";
 
 
@@ -1177,30 +2133,36 @@ int main(
     // ========================================================
 
     if (
-        argc >= 2 &&
-        string(argv[1]) ==
+        options.arguments.size() >= 1 &&
+        options.arguments[0] ==
             "--report"
     )
     {
-        double baseline =
-            0.0;
+        Baseline stored_baseline;
+        string baseline_message;
 
-        string baseline_commit;
+        int baseline_exit_code = 2;
 
         if (
-            !load_baseline_average(
-                baseline
+            !load_comparable_baseline(
+                stored_baseline,
+                baseline_message,
+                baseline_exit_code
             )
         ) {
             cerr
-                << "ERROR: Could not read baseline average.\n";
+                << "ERROR: "
+                << baseline_message
+                << "\n";
 
-            return 1;
+            return baseline_exit_code;
         }
 
-        load_baseline_commit(
-            baseline_commit
-        );
+        const double baseline =
+            stored_baseline.median_us;
+
+        const string baseline_commit =
+            stored_baseline.commit;
 
         string current_commit =
             get_git_commit();
@@ -1222,18 +2184,30 @@ int main(
             << "========================================\n";
 
         cout
-            << "\nRunning benchmark...\n";
+            << "\nMeasuring the working tree...\n";
 
-        double current =
-            0.0;
+        Stats measurement;
+
+        string measurement_error;
 
         if (
-            !run_benchmark(
-                current
+            !measure_working_tree(
+                options,
+                benchmark_executable,
+                measurement,
+                measurement_error
             )
         ) {
-            return 1;
+            cerr
+                << "ERROR: "
+                << measurement_error
+                << "\n";
+
+            return 2;
         }
+
+        const double current =
+            measurement.median_us;
 
         double change =
             calculate_change(
@@ -1243,7 +2217,7 @@ int main(
 
         bool regression =
             change >
-            REGRESSION_THRESHOLD;
+            options.threshold_percent;
 
         // ----------------------------------------------------
         // Analyze current commit
@@ -1269,7 +2243,7 @@ int main(
                 << "ERROR: Could not create "
                    "perfguard-report.md\n";
 
-            return 1;
+            return 2;
         }
 
         report
@@ -1341,7 +2315,7 @@ int main(
 
         report
             << "| Threshold | "
-            << REGRESSION_THRESHOLD
+            << options.threshold_percent
             << "% |\n\n";
 
         report
@@ -1494,13 +2468,15 @@ int main(
     // ========================================================
 
     if (
-        argc >= 3 &&
-        string(argv[1]) ==
+        options.arguments.size() >= 2 &&
+        options.arguments[0] ==
             "--diagnose"
     )
     {
+        HumanOutputGuard guard(options.json);
+
         const string commit =
-            argv[2];
+            options.arguments[1];
 
         EvidenceReport evidence =
             analyze_commit(
@@ -1515,12 +2491,19 @@ int main(
                 << evidence.error
                 << "\n";
 
-            return 1;
+            return fail_with_json(
+                options,
+                "diagnose",
+                evidence.error
+            );
         }
 
         DiagnosisResult diagnosis =
             diagnose_commit(
-                commit
+                commit,
+                options.runs > 0 ? options.runs : 1,
+                options.runs > 0 ? 1 : 0,
+                options.threshold_percent
             );
 
         if (
@@ -1531,7 +2514,62 @@ int main(
                 << diagnosis.error
                 << "\n";
 
-            return 1;
+            if (
+                !diagnosis.build_log.empty()
+            ) {
+                cerr
+                    << "\n--- Build output ---\n"
+                    << diagnosis.build_log
+                    << "\n--------------------\n";
+            }
+
+            return fail_with_json(
+                options,
+                "diagnose",
+                diagnosis.error
+            );
+        }
+
+        if (
+            options.json
+        ) {
+            JsonObject object;
+
+            object.string_field("command", "diagnose");
+            object.string_field(
+                "status",
+                diagnosis.regression
+                    ? "regression"
+                    : "ok"
+            );
+            object.string_field(
+                "commit",
+                diagnosis.commit
+            );
+            object.number_field(
+                "baseline_median_us",
+                diagnosis.baseline_us
+            );
+            object.number_field(
+                "current_median_us",
+                diagnosis.current_us
+            );
+            object.number_field(
+                "change_percent",
+                diagnosis.change_percent
+            );
+            object.number_field(
+                "threshold_percent",
+                diagnosis.threshold_percent
+            );
+            object.object_field(
+                "stats",
+                stats_json(diagnosis.stats)
+            );
+
+            emit_json(guard, object);
+
+            return diagnosis.regression ? 1 : 0;
         }
 
         cout
@@ -1664,13 +2702,13 @@ int main(
     // ========================================================
 
     if (
-        argc >= 3 &&
-        string(argv[1]) ==
+        options.arguments.size() >= 2 &&
+        options.arguments[0] ==
             "--evidence"
     )
     {
         show_commit_evidence(
-            argv[2]
+            options.arguments[1]
         );
 
         return 0;
@@ -1693,14 +2731,14 @@ int main(
     // ========================================================
 
     if (
-        argc >= 4 &&
-        string(argv[1]) ==
+        options.arguments.size() >= 3 &&
+        options.arguments[0] ==
             "--bisect-test"
     )
     {
         return run_bisect_test(
-            argv[2],
-            argv[3]
+            options.arguments[1],
+            options.arguments[2]
         );
     }
 
@@ -1713,19 +2751,15 @@ int main(
     // ========================================================
 
     if (
-        argc >= 2 &&
-        string(argv[1]) ==
+        options.arguments.size() >= 1 &&
+        options.arguments[0] ==
             "--bisect"
     )
     {
-        fs::path executable_path =
-            fs::absolute(
-                argv[0]
-            );
-
         const BisectResult result =
             run_bisect(
-                executable_path.string()
+                perfguard_executable.string(),
+                options.force
             );
 
         if (
@@ -1743,7 +2777,7 @@ int main(
                 << result.error
                 << "\n";
 
-            return 1;
+            return 2;
         }
 
         cout
@@ -1773,8 +2807,8 @@ int main(
     // ========================================================
 
     if (
-        argc >= 2 &&
-        string(argv[1]) ==
+        options.arguments.size() >= 1 &&
+        options.arguments[0] ==
             "--simulate-regression"
     )
     {
@@ -1790,8 +2824,18 @@ int main(
         cout
             << "Running artificial regression...\n";
 
+        // The fixture provides its own reference: the same workload is
+        // timed once as written and once with the slowdown injected,
+        // on this machine, in this run.
+        double baseline =
+            run_artificial_regression_benchmark(
+                0
+            );
+
         double average =
-            run_artificial_regression_benchmark();
+            run_artificial_regression_benchmark(
+                FIXTURE_SLEEP_MS
+            );
 
         cout
             << "\n";
@@ -1799,20 +2843,6 @@ int main(
         print_benchmark_result(
             average
         );
-
-        double baseline =
-            0.0;
-
-        if (
-            !load_baseline_average(
-                baseline
-            )
-        ) {
-            cout
-                << "\nNo baseline found.\n";
-
-            return 1;
-        }
 
         double change =
             calculate_change(
@@ -1852,12 +2882,12 @@ int main(
 
         cout
             << "Threshold: "
-            << REGRESSION_THRESHOLD
+            << options.threshold_percent
             << "%\n";
 
         if (
             change >
-            REGRESSION_THRESHOLD
+            options.threshold_percent
         ) {
             cout
                 << "Result: REGRESSION\n";
@@ -1874,27 +2904,79 @@ int main(
 
     // ========================================================
     // baseline
+    //
+    // Measures the working tree rather than any commit, so it runs
+    // before the benchmark below and replaces it.
     // ========================================================
 
-    bool baseline_mode =
-        argc >= 2 &&
-        string(argv[1]) ==
-            "baseline";
+    if (
+        options.arguments.size() >= 1 &&
+        options.arguments[0] ==
+            "baseline"
+    ) {
+        return run_baseline_mode(
+            options,
+            benchmark_executable
+        );
+    }
 
 
     // ========================================================
     // --check
+    //
+    // Runs its own builds, so it must not fall through to the
+    // benchmark of the working tree below.
     // ========================================================
 
-    bool check_mode =
-        argc >= 2 &&
-        string(argv[1]) ==
-            "--check";
+    if (
+        options.arguments.size() >= 1 &&
+        options.arguments[0] ==
+            "--check"
+    ) {
+        return run_check_mode(options);
+    }
 
 
     // ========================================================
-    // Normal benchmark
+    // Plain run: measure the working tree and compare it against the
+    // stored baseline.
     // ========================================================
+
+    HumanOutputGuard guard(options.json);
+
+    Baseline stored_baseline;
+    string baseline_message;
+
+    int baseline_exit_code = 2;
+
+    if (
+        !load_comparable_baseline(
+            stored_baseline,
+            baseline_message,
+            baseline_exit_code
+        )
+    ) {
+        cerr
+            << "ERROR: "
+            << baseline_message
+            << "\n";
+
+        return fail_with_json(
+            options,
+            "benchmark",
+            baseline_message
+        );
+    }
+
+    string git_commit =
+        get_git_commit();
+
+    if (
+        git_commit.empty()
+    ) {
+        git_commit =
+            "unknown";
+    }
 
     cout
         << "================================\n";
@@ -1905,226 +2987,110 @@ int main(
     cout
         << "================================\n";
 
-
-    // --------------------------------------------------------
-    // Git commit
-    // --------------------------------------------------------
-
-    string git_commit =
-        get_git_commit();
-
-    if (
-        !git_commit.empty()
-    ) {
-        cout
-            << "Commit: "
-            << git_commit
-            << "\n";
-    }
-    else {
-        cout
-            << "Commit: unknown\n";
-    }
+    cout
+        << "Commit: "
+        << git_commit
+        << "\n\n";
 
     cout
-        << "\n";
+        << "Measuring the working tree...\n";
 
+    Stats measurement;
 
-    // --------------------------------------------------------
-    // REAL benchmark
-    // --------------------------------------------------------
-
-    cout
-        << "Running benchmark...\n";
-
-    double average =
-    0.0;
+    string measurement_error;
 
     if (
-        !run_benchmark(
-            average
-        )
-    ) {
-        return 1;
-    }
-
-    cout
-        << "\n";
-
-
-    // ========================================================
-    // baseline mode
-    // ========================================================
-
-    if (
-        baseline_mode
-    )
-    {
-        if (
-            !create_baseline(
-                average,
-                git_commit
-            )
-        ) {
-            return 1;
-        }
-
-        return 0;
-    }
-
-
-    // ========================================================
-    // Baseline existence
-    // ========================================================
-
-    if (
-        !fs::exists(
-            BASELINE_PATH
-        )
-    )
-    {
-        cout
-            << "\n";
-
-        cout
-            << "No baseline found.\n";
-
-        cout
-            << "Run:\n";
-
-        cout
-            << "  perfguard baseline\n";
-
-        return 1;
-    }
-
-
-    // ========================================================
-    // Load baseline
-    // ========================================================
-
-    double baseline_average =
-        0.0;
-
-    string baseline_commit;
-
-    if (
-        !load_baseline_average(
-            baseline_average
+        !measure_working_tree(
+            options,
+            benchmark_executable,
+            measurement,
+            measurement_error
         )
     ) {
         cerr
-            << "ERROR: Could not read "
-               "baseline average.\n";
+            << "ERROR: "
+            << measurement_error
+            << "\n";
 
-        return 1;
+        return fail_with_json(
+            options,
+            "benchmark",
+            measurement_error
+        );
     }
 
-    load_baseline_commit(
-        baseline_commit
-    );
+    const double baseline =
+        stored_baseline.median_us;
 
+    const double current =
+        measurement.median_us;
 
-    // ========================================================
-    // Regression calculation
-    // ========================================================
-
-    double change =
+    const double change =
         calculate_change(
-            baseline_average,
-            average
+            baseline,
+            current
         );
 
+    const bool regression =
+        change >
+        options.threshold_percent;
 
-    // ========================================================
-    // --check
-    // ========================================================
+    const Baseline environment =
+        environment_baseline();
 
     if (
-        check_mode
-    )
-    {
-        cout
-            << "\n";
+        options.json
+    ) {
+        JsonObject object;
 
-        cout
-            << "PerfGuard Check\n";
+        object.string_field("command", "benchmark");
+        object.string_field(
+            "status",
+            regression
+                ? "regression"
+                : "ok"
+        );
+        object.string_field(
+            "baseline_commit",
+            stored_baseline.commit
+        );
+        object.string_field(
+            "current_commit",
+            git_commit
+        );
+        object.number_field(
+            "baseline_median_us",
+            baseline
+        );
+        object.number_field(
+            "current_median_us",
+            current
+        );
+        object.number_field("change_percent", change);
+        object.number_field(
+            "threshold_percent",
+            options.threshold_percent
+        );
+        object.object_field(
+            "stats",
+            stats_json(measurement)
+        );
+        object.object_field(
+            "metadata",
+            metadata_json(environment)
+        );
 
-        cout
-            << "===============\n";
+        emit_json(guard, object);
 
-        cout
-            << "Baseline Commit: "
-            << baseline_commit
-            << "\n";
-
-        cout
-            << "Current Commit:  "
-            << git_commit
-            << "\n";
-
-        cout
-            << "Baseline: "
-            << fixed
-            << setprecision(2)
-            << baseline_average
-            << " us\n";
-
-        cout
-            << "Current:  "
-            << fixed
-            << setprecision(2)
-            << average
-            << " us\n";
-
-        cout
-            << "Change:   ";
-
-        if (
-            change >= 0
-        ) {
-            cout
-                << "+";
-        }
-
-        cout
-            << fixed
-            << setprecision(2)
-            << change
-            << "%\n";
-
-        cout
-            << "Threshold: "
-            << REGRESSION_THRESHOLD
-            << "%\n";
-
-        if (
-            change >
-            REGRESSION_THRESHOLD
-        ) {
-            cout
-                << "Result: REGRESSION\n";
-
-            return 1;
-        }
-
-        cout
-            << "Result: OK\n";
-
-        return 0;
+        return regression ? 1 : 0;
     }
-
-
-    // ========================================================
-    // Normal result
-    // ========================================================
 
     cout
         << "\n";
 
     cout
         << "Baseline Commit: "
-        << baseline_commit
+        << stored_baseline.commit
         << "\n";
 
     cout
@@ -2133,17 +3099,17 @@ int main(
         << "\n";
 
     cout
-        << "Baseline Average: "
+        << "Baseline Median: "
         << fixed
         << setprecision(2)
-        << baseline_average
+        << baseline
         << " us\n";
 
     cout
-        << "Current Average:  "
+        << "Current Median:  "
         << fixed
         << setprecision(2)
-        << average
+        << current
         << " us\n";
 
     cout
@@ -2164,15 +3130,19 @@ int main(
 
     cout
         << "Threshold: "
-        << REGRESSION_THRESHOLD
+        << options.threshold_percent
         << "%\n";
+
+    print_stats(
+        "Current",
+        measurement
+    );
 
     cout
         << "\n";
 
     if (
-        change >
-        REGRESSION_THRESHOLD
+        regression
     ) {
         cout
             << "WARNING: Performance Regression!\n";

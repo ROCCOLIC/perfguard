@@ -1,30 +1,27 @@
-# PerfGuard automatic bisect test
+# PerfGuard check wrapper.
+#
+# Builds the tool and hands the comparison to `perfguard --check`, which
+# measures the stored baseline commit and HEAD in this same session and
+# decides the verdict from the medians. The script holds no baseline
+# number and no threshold: both live in .perfguard/baseline.json and the
+# CLI, so they cannot drift from what the tool actually uses.
+#
 # Exit code:
-#   0 = performance is OK
-#   1 = performance regression detected
-#   2 = test/build error
+#   0 = no regression
+#   1 = regression detected
+#   2 = error, or the stored baseline cannot be compared
 
 $ErrorActionPreference = "Stop"
 
-$ProjectRoot = "C:\perfguard"
-$BuildDir = "$ProjectRoot\build"
-$Exe = "$BuildDir\Debug\perfguard.exe"
-
-# Baseline measured from the original commit.
-$BaselineUs = 62738.5
-
-# Regression threshold.
-$Threshold = 10.0
+$ProjectRoot = Split-Path -Parent $PSScriptRoot
+$BuildDir = Join-Path $ProjectRoot "build"
+$Exe = Join-Path $BuildDir "Debug\perfguard.exe"
 
 Write-Host "================================"
-Write-Host "PerfGuard Bisect Check"
+Write-Host "PerfGuard Check"
 Write-Host "================================"
 
-# --------------------------------
-# 1. Build current commit
-# --------------------------------
-
-Write-Host "[1/3] Building..."
+Write-Host "[1/2] Building..."
 
 cmake --build $BuildDir --config Debug
 
@@ -39,57 +36,15 @@ if (!(Test-Path $Exe)) {
     exit 2
 }
 
-# --------------------------------
-# 2. Run benchmark
-# --------------------------------
+Write-Host "[2/2] Checking..."
 
-Write-Host "[2/3] Running benchmark..."
+Push-Location $ProjectRoot
 
-$output = & $Exe 2>&1
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "BENCHMARK FAILED"
-    exit 2
+try {
+    # Any extra arguments go to the CLI, e.g. -Threshold / --json.
+    & $Exe --check @args
+    exit $LASTEXITCODE
 }
-
-# --------------------------------
-# 3. Extract average
-# --------------------------------
-
-$averageLine = $output |
-    Select-String "Average:"
-
-if ($null -eq $averageLine) {
-    Write-Host "Could not find Average in benchmark output."
-    exit 2
+finally {
+    Pop-Location
 }
-
-$averageText = $averageLine.ToString()
-
-if ($averageText -match "Average:\s+([0-9.]+)\s+us") {
-    $CurrentUs = [double]$matches[1]
-}
-else {
-    Write-Host "Could not parse benchmark result."
-    exit 2
-}
-
-$Change = (($CurrentUs - $BaselineUs) / $BaselineUs) * 100.0
-
-Write-Host ""
-Write-Host "Baseline: $BaselineUs us"
-Write-Host "Current:  $CurrentUs us"
-Write-Host ("Change:   {0:N2}%" -f $Change)
-Write-Host "Threshold: $Threshold%"
-
-# --------------------------------
-# Result
-# --------------------------------
-
-if ($Change -gt $Threshold) {
-    Write-Host "Result: REGRESSION"
-    exit 1
-}
-
-Write-Host "Result: OK"
-exit 0
