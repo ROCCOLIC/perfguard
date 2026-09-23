@@ -42,8 +42,12 @@ double run_benchmark()
             data.begin(),
             data.end()
         );
+        // The injected regression. It sleeps for a shared constant so
+        // that the fixture and --simulate-regression inject the same
+        // slowdown, and so that the margin over the threshold is not
+        // quietly tuned down in one place and not the other.
         this_thread::sleep_for(
-            chrono::milliseconds(20)
+            chrono::milliseconds(FIXTURE_SLEEP_MS)
         );
         auto end =
             chrono::high_resolution_clock::now();
