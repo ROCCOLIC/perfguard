@@ -2064,6 +2064,23 @@ int main(
             current_commit
         );
 
+        // Unlike the plain run and --report, this mode goes on to
+        // bisect, and git bisect checks out the commits it tests, which
+        // it will not do over uncommitted changes. --force does not
+        // lift that: it only clears a bisect session left running. So
+        // on a dirty tree the analysis cannot get past its second step,
+        // and saying so here is worth as much as the measurement time
+        // the check above saves.
+        if (
+            dirty
+        ) {
+            cerr
+                << "WARNING: A regression found on a dirty tree cannot be "
+                   "bisected, since git bisect will not run over "
+                   "uncommitted changes. Commit or stash them to find a "
+                   "first bad commit.\n";
+        }
+
         cout
             << "========================================\n";
 
