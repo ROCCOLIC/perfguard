@@ -46,6 +46,7 @@ enable_testing()
 add_executable(perfguard_tests
     tests/perfguard_tests.cpp
     src/core.cpp
+    src/evidence.cpp
     src/measurement.cpp
 )
 target_include_directories(perfguard_tests PRIVATE

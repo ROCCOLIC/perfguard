@@ -8,9 +8,11 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 
 #include "core.h"
+#include "evidence.h"
 #include "measurement.h"
 #include "perfguard_config.h"
 
@@ -41,6 +43,33 @@ void check(
         "FAIL: %s\n",
         name.c_str()
     );
+}
+
+void write_text_file(
+    const fs::path& path,
+    const string& contents
+)
+{
+    ofstream file(path);
+
+    file << contents;
+}
+
+string read_text_file(
+    const fs::path& path
+)
+{
+    ifstream file(path);
+
+    if (!file) {
+        return string();
+    }
+
+    ostringstream contents;
+
+    contents << file.rdbuf();
+
+    return contents.str();
 }
 
 void check_equal(
@@ -1000,9 +1029,439 @@ void test_constants()
     );
 }
 
+// ============================================================
+// measure_interleaved
+//
+// The two sides are stubs that report a fixed average, so the
+// structure can be checked without depending on how fast this
+// machine sorts a million integers.
+// ============================================================
+
+void test_measure_interleaved()
+{
+    const fs::path directory =
+        session_temp_directory() /
+        "interleaved";
+
+    error_code error;
+
+    fs::create_directories(directory, error);
+
+    const fs::path fast =
+        directory / "fast.bat";
+
+    const fs::path slow =
+        directory / "slow.bat";
+
+    write_text_file(
+        fast,
+        "@echo off\r\n"
+        "echo Average: 100.00 us\r\n"
+    );
+
+    write_text_file(
+        slow,
+        "@echo off\r\n"
+        "echo Average: 200.00 us\r\n"
+    );
+
+    Stats fast_stats;
+    Stats slow_stats;
+
+    string message;
+
+    check(
+        measure_interleaved(
+            fast,
+            slow,
+            2,
+            2,
+            fast_stats,
+            slow_stats,
+            message
+        ),
+        "two executables are measured in alternating rounds"
+    );
+
+    check(
+        fast_stats.samples == 4 &&
+        slow_stats.samples == 4,
+        "every round contributes to both sides"
+    );
+
+    // If a round leaked into the other side's samples, the maximum
+    // here would be the slow side's figure.
+    check(
+        fast_stats.median_us == 100.0 &&
+        fast_stats.max_us == 100.0,
+        "the first side keeps its own samples"
+    );
+
+    check(
+        slow_stats.median_us == 200.0 &&
+        slow_stats.min_us == 200.0,
+        "the second side keeps its own samples"
+    );
+
+    // A missing executable has to be reported rather than measured as
+    // zero, which a comparison would read as an improvement.
+    Stats ignored_a;
+    Stats ignored_b;
+
+    check(
+        !measure_interleaved(
+            directory / "absent.bat",
+            fast,
+            1,
+            1,
+            ignored_a,
+            ignored_b,
+            message
+        ),
+        "a missing executable is reported"
+    );
+
+    check(
+        !message.empty(),
+        "the missing executable says why"
+    );
+
+    check(
+        !measure_interleaved(
+            fast,
+            slow,
+            0,
+            1,
+            ignored_a,
+            ignored_b,
+            message
+        ),
+        "a round count of zero is refused"
+    );
+}
+
+// ============================================================
+// analyze_commit
+// ============================================================
+
+// The commit guaranteed to exist in the repository the tests are
+// built from. Skips a merge, whose diff git does not print by
+// default and which analyze_commit therefore reports as unreadable.
+string readable_commit()
+{
+    return trim(
+        run_command(
+            "git rev-list --no-merges -1 HEAD",
+            false,
+            60000
+        ).output
+    );
+}
+
+void test_analyze_commit()
+{
+    // Refused before any git command runs, so no repository is needed.
+    const EvidenceReport invalid =
+        analyze_commit("zzz");
+
+    check(
+        !invalid.success,
+        "a too-short commit hash is not analysed"
+    );
+
+    check(
+        !invalid.error.empty(),
+        "a refused commit says why"
+    );
+
+    check(
+        !analyze_commit("").success,
+        "an empty commit hash is not analysed"
+    );
+
+    // Well formed, but not in the repository: it has to fail rather
+    // than report empty evidence about it.
+    check(
+        !analyze_commit(
+            "0000000000000000000000000000000000000000"
+        ).success,
+        "a commit that does not exist is not analysed"
+    );
+
+    const string commit =
+        readable_commit();
+
+    if (!is_valid_commit_hash(commit)) {
+        printf("SKIP: no readable commit to analyse\n");
+        return;
+    }
+
+    const EvidenceReport report =
+        analyze_commit(commit);
+
+    check(
+        report.success,
+        "a real commit is analysed"
+    );
+
+    check_equal(
+        report.commit,
+        commit,
+        "the full hash is reported"
+    );
+
+    check_equal(
+        report.short_commit,
+        commit.substr(0, 7),
+        "the short hash is the first seven characters"
+    );
+
+    check(
+        !report.message.empty(),
+        "the commit message is read"
+    );
+
+    check(
+        !report.author.empty(),
+        "the author is read"
+    );
+}
+
+// ============================================================
+// CLI contract
+//
+// Drives the executable that ships, so the exit codes and the
+// promise that --json writes its document on stdout are checked
+// against the real thing rather than a copy of the logic.
+// ============================================================
+
+struct CliResult
+{
+    int exit_code = -1;
+
+    string out;
+    string err;
+};
+
+CliResult run_cli(
+    const fs::path& executable,
+    const string& arguments,
+    const fs::path& working_directory = fs::path()
+)
+{
+    const fs::path directory =
+        session_temp_directory() /
+        "cli";
+
+    error_code error;
+
+    fs::create_directories(directory, error);
+
+    const fs::path out_path =
+        directory / "stdout.txt";
+
+    const fs::path err_path =
+        directory / "stderr.txt";
+
+    // The whole command is wrapped in a further pair of quotes: cmd.exe
+    // strips the first and last quote of what follows /C when the
+    // command begins with one and holds more than a single quoted
+    // token, which would otherwise leave the line unbalanced.
+    string command = "\"";
+
+    if (!working_directory.empty()) {
+        command +=
+            "cd /d \"" +
+            working_directory.string() +
+            "\" && ";
+    }
+
+    command +=
+        "\"" +
+        executable.string() +
+        "\" " +
+        arguments +
+        " > \"" +
+        out_path.string() +
+        "\" 2> \"" +
+        err_path.string() +
+        "\"";
+
+    command += "\"";
+
+    const CommandResult result =
+        run_command(
+            command,
+            false,
+            60000
+        );
+
+    CliResult cli;
+
+    cli.exit_code = result.exit_code;
+    cli.out = read_text_file(out_path);
+    cli.err = read_text_file(err_path);
+
+    return cli;
+}
+
+void test_cli_contract(
+    const fs::path& perfguard
+)
+{
+    if (!fs::exists(perfguard)) {
+        printf(
+            "SKIP: %s not found\n",
+            perfguard.string().c_str()
+        );
+
+        return;
+    }
+
+    const CliResult version =
+        run_cli(perfguard, "--version");
+
+    check(
+        version.exit_code == 0,
+        "--version exits 0"
+    );
+
+    check(
+        version.out.find(PERFGUARD_VERSION) != string::npos,
+        "--version reports the version on stdout"
+    );
+
+    const CliResult help =
+        run_cli(perfguard, "--help");
+
+    check(
+        help.exit_code == 0 &&
+        help.out.find("Usage:") != string::npos,
+        "--help prints the usage on stdout"
+    );
+
+    const CliResult unknown =
+        run_cli(perfguard, "--not-a-command");
+
+    check(
+        unknown.exit_code == 2,
+        "an unknown option exits 2"
+    );
+
+    check(
+        unknown.err.find("Unknown option") != string::npos,
+        "an unknown option is named on stderr"
+    );
+
+    // A command given too few arguments must not fall through to the
+    // plain benchmark run, so each one is asked to say so.
+    check(
+        run_cli(perfguard, "--diagnose").exit_code == 2 &&
+        run_cli(perfguard, "--evidence").exit_code == 2 &&
+        run_cli(perfguard, "--bisect-test 123").exit_code == 2,
+        "a command given too few arguments exits 2"
+    );
+
+    check(
+        run_cli(perfguard, "--threshold nope --check").exit_code == 2,
+        "a non-numeric threshold exits 2"
+    );
+
+    // Under --json the document is the only thing on stdout whatever
+    // the outcome, and the narration moves out of the way.
+    const CliResult json_error =
+        run_cli(perfguard, "--evidence zzz --json");
+
+    check(
+        json_error.exit_code == 2,
+        "a failing --json command still exits 2"
+    );
+
+    check(
+        json_error.out.find("\"status\": \"error\"") != string::npos,
+        "a failing --json command writes an error document on stdout"
+    );
+
+    check(
+        json_error.out.find("Evidence analysis failed") == string::npos,
+        "the human narration stays off stdout under --json"
+    );
+
+    check(
+        json_error.err.find("Evidence analysis failed") != string::npos,
+        "the human narration moves to stderr under --json"
+    );
+
+    check(
+        json_error.out.rfind("{\n", 0) == 0 &&
+        !json_error.out.empty() &&
+        json_error.out.back() == '\n',
+        "the document is the whole of stdout"
+    );
+
+    // The default command needs a project to read a baseline from,
+    // and says so in a document rather than only in prose.
+    const fs::path outside =
+        session_temp_directory() /
+        "no-project";
+
+    error_code error;
+
+    fs::create_directories(outside, error);
+
+    const CliResult no_project =
+        run_cli(perfguard, "--json", outside);
+
+    check(
+        no_project.exit_code == 2,
+        "a run outside a project exits 2"
+    );
+
+    check(
+        no_project.out.find("\"command\": \"benchmark\"") != string::npos &&
+        no_project.out.find("\"status\": \"error\"") != string::npos,
+        "a run outside a project writes an error document"
+    );
+
+    // An array field is written as one line of quoted strings; read
+    // it out of a real command so the shape checked is the one that
+    // ships.
+    const string commit =
+        readable_commit();
+
+    if (!is_valid_commit_hash(commit)) {
+        printf("SKIP: no readable commit for --evidence\n");
+        return;
+    }
+
+    const CliResult evidence =
+        run_cli(
+            perfguard,
+            "--evidence " + commit + " --json"
+        );
+
+    check(
+        evidence.exit_code == 0,
+        "--evidence for a real commit exits 0"
+    );
+
+    check(
+        evidence.out.find("\"changed_files\": [") != string::npos,
+        "a string array field is written as an array"
+    );
+
+    check(
+        evidence.out.find("\"performance_evidence\": [") != string::npos,
+        "an empty-candidate array field is still written"
+    );
+}
+
 } // namespace
 
-int main()
+int main(
+    int argc,
+    char* argv[]
+)
 {
     test_trim();
     test_is_valid_commit_hash();
@@ -1014,7 +1473,20 @@ int main()
     test_json();
     test_baseline();
     test_run_command();
+    test_measure_interleaved();
+    test_analyze_commit();
     test_constants();
+
+    // The other executables are built beside this one, so the CLI is
+    // driven from where the build put it rather than from a guess.
+    if (argc > 0) {
+        const fs::path directory =
+            fs::absolute(argv[0]).parent_path();
+
+        test_cli_contract(
+            directory / "perfguard.exe"
+        );
+    }
 
     printf(
         "\n%d checks, %d failures\n",
