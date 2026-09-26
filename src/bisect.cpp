@@ -815,7 +815,8 @@ BisectResult run_bisect(
     CommandResult bisect =
         run_command(
             command,
-            true
+            true,
+            BISECT_TIMEOUT_MS
         );
 
     result.output =

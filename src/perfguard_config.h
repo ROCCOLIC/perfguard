@@ -64,4 +64,15 @@ inline constexpr int GIT_TIMEOUT_MS = 30'000;
 inline constexpr int BUILD_TIMEOUT_MS = 120'000;
 inline constexpr int BENCHMARK_TIMEOUT_MS = 300'000;
 
+// `git bisect run` builds and benchmarks every commit it visits, so it
+// is not one command but several, each of them slower than the git
+// deadline. Measured here: a single bisect step -- worktree, configure,
+// build, benchmark -- takes about fifteen seconds, and a bisect over
+// six commits is three of them, which the git deadline cut off in the
+// middle. The builds and the benchmark inside a step keep their own,
+// shorter deadlines, so a step that stalls fails as a step rather than
+// by hanging; this is the backstop above them, not the budget one step
+// has to fit inside.
+inline constexpr int BISECT_TIMEOUT_MS = 30 * 60 * 1000;
+
 }  // namespace perfguard
