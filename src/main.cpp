@@ -2869,6 +2869,10 @@ int main(
                 "stats",
                 stats_json(diagnosis.stats)
             );
+            impact.object_field(
+                "baseline_stats",
+                stats_json(diagnosis.baseline_stats)
+            );
 
             object.object_field(
                 "diagnosis",
@@ -2878,6 +2882,10 @@ int main(
             object.object_field(
                 "stats",
                 stats_json(measurement)
+            );
+            object.object_field(
+                "baseline_stats",
+                stats_json(baseline_stats)
             );
             object.object_field(
                 "metadata",
@@ -3328,6 +3336,10 @@ int main(
                 stats_json(measurement)
             );
             object.object_field(
+                "baseline_stats",
+                stats_json(baseline_stats)
+            );
+            object.object_field(
                 "metadata",
                 metadata_json(
                     environment_baseline()
@@ -3451,6 +3463,10 @@ int main(
             object.object_field(
                 "stats",
                 stats_json(diagnosis.stats)
+            );
+            object.object_field(
+                "baseline_stats",
+                stats_json(diagnosis.baseline_stats)
             );
 
             emit_json(guard, object);
@@ -3994,6 +4010,13 @@ int main(
         change >
         options.threshold_percent;
 
+    // The stored baseline records the spread of the samples behind its
+    // median, so the noise this comparison was decided within can be
+    // drawn from both sides without measuring the baseline over again,
+    // for the verdict line and for the document alike.
+    const Stats baseline_stats =
+        stored_stats(stored_baseline);
+
     const Baseline environment =
         environment_baseline();
 
@@ -4037,6 +4060,10 @@ int main(
         object.object_field(
             "stats",
             stats_json(measurement)
+        );
+        object.object_field(
+            "baseline_stats",
+            stats_json(baseline_stats)
         );
         object.object_field(
             "metadata",
@@ -4103,12 +4130,6 @@ int main(
 
     cout
         << "\n";
-
-    // The stored baseline records the spread of the samples behind its
-    // median, so the noise this comparison was decided within can be
-    // reported here without building anything a second time.
-    const Stats baseline_stats =
-        stored_stats(stored_baseline);
 
     if (
         regression
