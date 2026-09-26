@@ -243,7 +243,9 @@ bool load_comparable_baseline(
 // Show commit evidence
 // ============================================================
 
-void show_commit_evidence(
+// Returns the process exit code: a commit whose evidence cannot be
+// read is a failed command, not a report about the commit.
+int show_commit_evidence(
     const string& commit
 )
 {
@@ -260,7 +262,7 @@ void show_commit_evidence(
             << report.error
             << "\n";
 
-        return;
+        return 2;
     }
 
     cout
@@ -342,6 +344,8 @@ void show_commit_evidence(
 
     cout
         << "\n";
+
+    return 0;
 }
 
 
@@ -503,6 +507,30 @@ bool is_known_command(
     }
 
     return false;
+}
+
+
+// Arguments a command cannot run without, counting the command
+// itself. A command that takes none is one, so that it is never
+// reported as missing something.
+int required_arguments(
+    const string& command
+)
+{
+    if (
+        command == "--bisect-test"
+    ) {
+        return 3;
+    }
+
+    if (
+        command == "--diagnose" ||
+        command == "--evidence"
+    ) {
+        return 2;
+    }
+
+    return 1;
 }
 
 
@@ -934,7 +962,13 @@ bool emit_json(
 }
 
 
+// The error document goes through the same guard a success one does.
+// With --json the guard has stdout pointed at stderr for the duration
+// of the narration, so writing the document without restoring it would
+// put it on the wrong stream and leave stdout empty for the caller
+// that asked for a document there.
 int fail_with_json(
+    HumanOutputGuard& guard,
     const Options& options,
     const string& command,
     const string& message
@@ -949,7 +983,7 @@ int fail_with_json(
         object.string_field("status", "error");
         object.string_field("message", message);
 
-        cout << object.dump() << "\n";
+        emit_json(guard, object);
     }
 
     return 2;
@@ -982,6 +1016,7 @@ int run_baseline_mode(
                "the PerfGuard project directory.\n";
 
         return fail_with_json(
+            guard,
             options,
             "baseline",
             "Unable to find the PerfGuard project root."
@@ -1016,6 +1051,7 @@ int run_baseline_mode(
             << "\n";
 
         return fail_with_json(
+            guard,
             options,
             "baseline",
             error
@@ -1058,6 +1094,7 @@ int run_baseline_mode(
             << "ERROR: Could not read the current commit.\n";
 
         return fail_with_json(
+            guard,
             options,
             "baseline",
             "Could not read the current commit."
@@ -1077,6 +1114,7 @@ int run_baseline_mode(
             << "\n";
 
         return fail_with_json(
+            guard,
             options,
             "baseline",
             error
@@ -1167,6 +1205,7 @@ int run_check_mode(
             << "\n";
 
         return fail_with_json(
+            guard,
             options,
             "check",
             message
@@ -1187,6 +1226,7 @@ int run_check_mode(
             << "\", which is not a commit hash.\n";
 
         return fail_with_json(
+            guard,
             options,
             "check",
             "The baseline names a commit that is not a commit hash."
@@ -1203,6 +1243,7 @@ int run_check_mode(
             << "ERROR: Could not read the current commit.\n";
 
         return fail_with_json(
+            guard,
             options,
             "check",
             "Could not read the current commit."
@@ -1258,6 +1299,7 @@ int run_check_mode(
         release_build(baseline_build);
 
         return fail_with_json(
+            guard,
             options,
             "check",
             error
@@ -1297,6 +1339,7 @@ int run_check_mode(
         );
 
         return fail_with_json(
+            guard,
             options,
             "check",
             error
@@ -1353,6 +1396,7 @@ int run_check_mode(
             << "\n";
 
         return fail_with_json(
+            guard,
             options,
             "check",
             error
@@ -1583,6 +1627,40 @@ int main(
             << "\n";
 
         return 0;
+    }
+
+    // A command given too few arguments must say so. Without this it
+    // would match no branch below and fall through to the plain
+    // benchmark run, measuring the working tree as though that were
+    // what was asked for.
+    if (
+        !options.arguments.empty()
+    ) {
+        const string command =
+            options.arguments[0];
+
+        if (
+            is_known_command(command) &&
+            static_cast<int>(
+                options.arguments.size()
+            ) < required_arguments(command)
+        ) {
+            cerr
+                << "ERROR: "
+                << command
+                << " needs "
+                << (
+                    command == "--bisect-test"
+                        ? "a baseline and a threshold."
+                        : "a commit."
+                )
+                << "\n\n";
+
+            cout
+                << usage_text();
+
+            return 2;
+        }
     }
 
     // ========================================================
@@ -2494,6 +2572,7 @@ int main(
                 << "\n";
 
             return fail_with_json(
+                guard,
                 options,
                 "diagnose",
                 evidence.error
@@ -2526,6 +2605,7 @@ int main(
             }
 
             return fail_with_json(
+                guard,
                 options,
                 "diagnose",
                 diagnosis.error
@@ -2709,11 +2789,9 @@ int main(
             "--evidence"
     )
     {
-        show_commit_evidence(
+        return show_commit_evidence(
             options.arguments[1]
         );
-
-        return 0;
     }
 
 
@@ -2964,6 +3042,7 @@ int main(
             << "\n";
 
         return fail_with_json(
+            guard,
             options,
             "benchmark",
             baseline_message
@@ -3015,6 +3094,7 @@ int main(
             << "\n";
 
         return fail_with_json(
+            guard,
             options,
             "benchmark",
             measurement_error
