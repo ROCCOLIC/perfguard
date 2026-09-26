@@ -1,6 +1,29 @@
 #pragma once
 
 
+// Build metadata, supplied by the build as compile definitions (see
+// perfguard_add_metadata_definitions in CMakeLists.txt). The fallbacks
+// exist because nothing in the source declares these names, so a
+// translation unit compiled without CMake -- by an editor, an indexer,
+// or a bare g++ command -- failed on them. #ifndef leaves a CMake
+// build, which defines all four, exactly as it was.
+#ifndef PERFGUARD_VERSION
+#define PERFGUARD_VERSION "unknown"
+#endif
+
+#ifndef PERFGUARD_COMPILER
+#define PERFGUARD_COMPILER "unknown"
+#endif
+
+#ifndef PERFGUARD_BUILD_TYPE
+#define PERFGUARD_BUILD_TYPE "unknown"
+#endif
+
+#ifndef PERFGUARD_CMAKE_GENERATOR
+#define PERFGUARD_CMAKE_GENERATOR "unknown"
+#endif
+
+
 // Shared by the PerfGuard tool and the standalone benchmark so that
 // the two targets cannot drift apart. Header-only by design: a shared
 // translation unit would force sort_1m to link the tool's Windows code.
