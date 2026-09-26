@@ -2541,7 +2541,15 @@ int main(
         report
             << "| Threshold | "
             << options.threshold_percent
-            << "% |\n\n";
+            << "% |\n";
+
+        report
+            << "| Noise | "
+            << noise_text(
+                baseline_stats,
+                measurement
+            )
+            << " |\n\n";
 
 
         // ----------------------------------------------------
@@ -2932,6 +2940,12 @@ int main(
         const string baseline_commit =
             stored_baseline.commit;
 
+        // The comparison is against the stored figure rather than
+        // against a build of that commit, so its recorded spread is one
+        // of the two sides the noise is drawn from.
+        const Stats baseline_stats =
+            stored_stats(stored_baseline);
+
         string current_commit =
             get_git_commit();
 
@@ -3109,7 +3123,15 @@ int main(
         report
             << "| Threshold | "
             << options.threshold_percent
-            << "% |\n\n";
+            << "% |\n";
+
+        report
+            << "| Noise | "
+            << noise_text(
+                baseline_stats,
+                measurement
+            )
+            << " |\n\n";
 
         report
             << "## Git\n\n";
