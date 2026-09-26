@@ -95,6 +95,18 @@ run; `--runs` sets how many. Outliers are only rejected when there are
 at least seven samples, and at most one is dropped, so a small sample is
 reported as measured rather than trimmed into a shape it does not have.
 
+The verdict line carries that spread, so a change can be read against
+the movement that decided it rather than against the threshold alone:
+
+    Result: REGRESSION (noise ±1.83%)
+
+The figure is twice the larger relative standard deviation of the
+samples behind the two medians, in the same percent as the change and
+the threshold. Twice, because the change is the difference of two
+independently noisy medians, so both sides contribute to it. A change
+within a noise that reads as a large fraction of the threshold is one
+to measure again before acting on.
+
 ## CI
 
 `--json` on stdout makes the verdict readable without parsing prose:

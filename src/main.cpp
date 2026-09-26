@@ -368,6 +368,94 @@ void print_stats(
 
 
 // ============================================================
+// Noise
+//
+// Two medians can differ by a few percent with nothing changed between
+// them, so a verdict drawn from the comparison alone is decided on
+// numbers that move by themselves. The spread of the samples that
+// produced the median says how much of the reported change is that
+// movement: it is the size the change has to beat to mean anything,
+// since the threshold is what it does have to beat to fail.
+//
+// Twice the larger relative standard deviation, reported in the same
+// percent the change and the threshold are. Twice, because the change
+// is the difference of two independently noisy medians, so both sides'
+// spread contributes to it.
+// ============================================================
+
+bool noise_measurable(
+    const Stats& stats
+)
+{
+    return
+        stats.samples >= 2 &&
+        stats.median_us > 0.0;
+}
+
+
+double noise_magnitude(
+    const Stats& first,
+    const Stats& second
+)
+{
+    double largest = 0.0;
+
+    for (
+        const Stats* stats :
+        {
+            &first,
+            &second
+        }
+    ) {
+        if (
+            !noise_measurable(*stats)
+        ) {
+            continue;
+        }
+
+        largest =
+            max<double>(
+                largest,
+                stats->stdev_us /
+                    stats->median_us
+            );
+    }
+
+    return
+        200.0 *
+        largest;
+}
+
+
+string noise_suffix(
+    const Stats& first,
+    const Stats& second
+)
+{
+    if (
+        !noise_measurable(first) &&
+        !noise_measurable(second)
+    ) {
+        return " (noise not measurable)";
+    }
+
+    ostringstream suffix;
+
+    suffix
+        << " (noise \xC2\xB1"
+        << fixed
+        << setprecision(2)
+        << noise_magnitude(
+            first,
+            second
+        )
+        << "%)";
+
+    return suffix.str();
+}
+
+
+// ============================================================
 // Command line
 // ============================================================
 
@@ -1730,13 +1818,27 @@ int run_check_mode(
         regression
     ) {
         cout
-            << "Result: REGRESSION\n";
+            << "Result: REGRESSION";
+
+        cout
+            << noise_suffix(
+                baseline_stats,
+                current_stats
+            )
+            << "\n";
 
         return 1;
     }
 
     cout
-        << "Result: OK\n";
+        << "Result: OK";
+
+    cout
+        << noise_suffix(
+            baseline_stats,
+            current_stats
+        )
+        << "\n";
 
     return 0;
 }
@@ -2031,7 +2133,14 @@ int main(
             options.threshold_percent
         ) {
             cout
-                << "\nResult: OK\n";
+                << "\nResult: OK";
+
+            cout
+                << noise_suffix(
+                    measurement,
+                    measurement
+                )
+                << "\n";
 
             cout
                 << "\nNo performance regression detected.\n";
@@ -2090,7 +2199,14 @@ int main(
 
 
         cout
-            << "\nResult: REGRESSION\n\n";
+            << "\nResult: REGRESSION";
+
+        cout
+            << noise_suffix(
+                measurement,
+                measurement
+            )
+            << "\n\n";
 
 
         // ----------------------------------------------------
@@ -3295,7 +3411,14 @@ int main(
         cout
             << "  Threshold: "
             << diagnosis.threshold_percent
-            << "%\n";
+            << "%";
+
+        cout
+            << noise_suffix(
+                diagnosis.stats,
+                diagnosis.stats
+            )
+            << "\n";
 
         cout
             << "\nDiagnosis:\n";
