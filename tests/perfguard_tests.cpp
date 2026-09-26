@@ -1552,6 +1552,128 @@ void test_cli_contract(
     );
 }
 
+// ============================================================
+// The two spreads a document carries
+//
+// The noise figure is twice the larger relative standard deviation
+// of the samples behind the two medians, so a document holding both
+// spreads lets a reader work it out. Driven against a baseline
+// written here whose own spread is far wider than a live measurement
+// of this benchmark reaches, so the figure it forces is known in
+// advance and a comparison that quietly used one side would read
+// too low to match.
+// ============================================================
+
+void test_cli_json_spreads(
+    const fs::path& perfguard
+)
+{
+    if (!fs::exists(perfguard)) {
+        printf("SKIP: %s not found\n", perfguard.string().c_str());
+        return;
+    }
+
+    const fs::path scratch =
+        session_temp_directory() /
+        "spread-project";
+
+    error_code error;
+
+    fs::create_directories(scratch, error);
+
+    write_text_file(
+        scratch / "CMakeLists.txt",
+        "# scratch\n"
+    );
+
+    const CommandResult initialised =
+        run_command(
+            "cd /d \"" +
+            scratch.string() +
+            "\" && git init",
+            true,
+            60000
+        );
+
+    if (initialised.exit_code != 0) {
+        printf("SKIP: could not create a scratch repository\n");
+        return;
+    }
+
+    // A relative standard deviation of a quarter, which the figure
+    // doubles to 50%: wider than the samples behind a live median of
+    // this benchmark, so the baseline is the side that decides it.
+    Baseline baseline;
+
+    fill_environment_metadata(baseline);
+
+    baseline.benchmark = BENCHMARK_NAME;
+    baseline.commit = "41f6091";
+    baseline.average_us = 200000.0;
+    baseline.median_us = 200000.0;
+    baseline.stdev_us = 50000.0;
+    baseline.min_us = 100000.0;
+    baseline.max_us = 300000.0;
+    baseline.runs = 5;
+    baseline.warmup_runs = 1;
+
+    string message;
+
+    if (!write_baseline(scratch, baseline, message)) {
+        printf("SKIP: could not write a scratch baseline\n");
+        return;
+    }
+
+    const CliResult measured =
+        run_cli(perfguard, "--runs 2 --json", scratch);
+
+    check(
+        measured.exit_code == 0 ||
+        measured.exit_code == 1,
+        "a scratch project measures its working tree"
+    );
+
+    check(
+        measured.out.find("\"baseline_stats\"") != string::npos &&
+        measured.out.find("\"current_stats\"") != string::npos,
+        "a comparison document carries both spreads"
+    );
+
+    double noise = 0.0;
+
+    check(
+        json_get_number(
+            measured.out,
+            "noise_percent",
+            noise
+        )
+        &&
+        noise == 50.0,
+        "the noise figure is drawn from both spreads"
+    );
+
+    // One sample leaves nothing to draw a spread from. The field is
+    // then left out rather than written as a zero, which would read
+    // as a perfectly steady measurement.
+    Baseline single = baseline;
+
+    single.runs = 1;
+
+    if (!write_baseline(scratch, single, message)) {
+        printf("SKIP: could not write a scratch baseline\n");
+        return;
+    }
+
+    const CliResult unmeasurable =
+        run_cli(perfguard, "--runs 1 --json", scratch);
+
+    check(
+        unmeasurable.out.find("\"baseline_stats\"") != string::npos &&
+        unmeasurable.out.find("noise_percent") == string::npos,
+        "no noise figure is written when no side has a spread"
+    );
+}
+
 } // namespace
 
 int main(
@@ -1580,6 +1702,10 @@ int main(
             fs::absolute(argv[0]).parent_path();
 
         test_cli_contract(
+            directory / "perfguard.exe"
+        );
+
+        test_cli_json_spreads(
             directory / "perfguard.exe"
         );
     }
