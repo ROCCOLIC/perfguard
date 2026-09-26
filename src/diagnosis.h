@@ -31,10 +31,13 @@ struct DiagnosisResult {
     std::string build_log;
 };
 
+// calls and warmup default to what the tool itself uses, so a caller
+// that does not care about them gets the same figures --diagnose does
+// rather than a single unrepeated sample.
 DiagnosisResult diagnose_commit(
     const std::string& commit,
-    int calls = 1,
-    int warmup = 0,
+    int calls = perfguard::BASELINE_SAMPLES,
+    int warmup = 1,
     double threshold_percent =
         perfguard::DEFAULT_THRESHOLD_PERCENT
 );

@@ -1901,8 +1901,8 @@ int main(
         DiagnosisResult diagnosis =
             diagnose_commit(
                 first_bad_commit,
-                options.runs > 0 ? options.runs : 1,
-                options.runs > 0 ? 1 : 0,
+                options.runs > 0 ? options.runs : BASELINE_SAMPLES,
+                1,
                 options.threshold_percent
             );
 
@@ -2586,8 +2586,8 @@ int main(
         DiagnosisResult diagnosis =
             diagnose_commit(
                 commit,
-                options.runs > 0 ? options.runs : 1,
-                options.runs > 0 ? 1 : 0,
+                options.runs > 0 ? options.runs : BASELINE_SAMPLES,
+                1,
                 options.threshold_percent
             );
 
