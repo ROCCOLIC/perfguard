@@ -85,6 +85,57 @@ string get_git_commit()
 
 
 // ============================================================
+// Working tree
+//
+// The plain run, --report and --analyze measure the benchmark built
+// out of the working tree and name HEAD as the commit they measured.
+// With uncommitted changes those are not the same code, so a reader
+// who has only the commit would take the number for one measured
+// from it.
+//
+// A tree whose state cannot be read counts as dirty: the question is
+// asked to avoid claiming a commit describes what was measured, and a
+// failed read cannot support that claim.
+// ============================================================
+
+bool working_tree_dirty()
+{
+    const CommandResult status =
+        run_command(
+            "git status --porcelain",
+            true
+        );
+
+    return
+        status.exit_code != 0 ||
+        !trim(status.output).empty();
+}
+
+
+// Warns that the measurement is of the working tree rather than of
+// the commit named beside it. Warned about rather than refused:
+// measuring work in progress is what these modes are for, and it is
+// only the label that would otherwise mislead.
+void warn_if_working_tree_dirty(
+    bool dirty,
+    const string& commit
+)
+{
+    if (
+        !dirty
+    ) {
+        return;
+    }
+
+    cerr
+        << "WARNING: The working tree has uncommitted changes, so the "
+           "measurement is of the working tree rather than of "
+        << commit
+        << ".\n";
+}
+
+
+// ============================================================
 // Benchmark
 // ============================================================
 
@@ -1841,6 +1892,18 @@ int main(
         const string current_commit =
             get_git_commit();
 
+        // Checked before the measurement rather than left to the bisect
+        // step that refuses a dirty tree: that refusal comes after the
+        // working tree has been built and measured, so the work would
+        // have been spent before the objection is raised.
+        const bool dirty =
+            working_tree_dirty();
+
+        warn_if_working_tree_dirty(
+            dirty,
+            current_commit
+        );
+
         cout
             << "========================================\n";
 
@@ -1987,6 +2050,10 @@ int main(
                 object.string_field(
                     "current_commit",
                     current_commit
+                );
+                object.bool_field(
+                    "working_tree_dirty",
+                    dirty
                 );
                 object.number_field(
                     "baseline_median_us",
@@ -2253,7 +2320,16 @@ int main(
         report
             << "- First bad commit: `"
             << first_bad_commit
-            << "`\n\n";
+            << "`\n";
+
+        report
+            << "- Working tree: "
+            << (
+                dirty
+                    ? "uncommitted changes"
+                    : "clean"
+            )
+            << "\n\n";
 
 
         // ----------------------------------------------------
@@ -2459,6 +2535,10 @@ int main(
                 "current_commit",
                 current_commit
             );
+            object.bool_field(
+                "working_tree_dirty",
+                dirty
+            );
             object.string_field(
                 "first_bad_commit",
                 first_bad_commit
@@ -2622,6 +2702,14 @@ int main(
             current_commit =
                 "unknown";
         }
+
+        const bool dirty =
+            working_tree_dirty();
+
+        warn_if_working_tree_dirty(
+            dirty,
+            current_commit
+        );
 
         cout
             << "========================================\n";
@@ -2795,7 +2883,16 @@ int main(
         report
             << "- Current commit: `"
             << current_commit
-            << "`\n\n";
+            << "`\n";
+
+        report
+            << "- Working tree: "
+            << (
+                dirty
+                    ? "uncommitted changes"
+                    : "clean"
+            )
+            << "\n\n";
 
         // ----------------------------------------------------
         // Commit evidence
@@ -2944,6 +3041,10 @@ int main(
             object.string_field(
                 "current_commit",
                 current_commit
+            );
+            object.bool_field(
+                "working_tree_dirty",
+                dirty
             );
             object.number_field(
                 "baseline_median_us",
@@ -3559,6 +3660,14 @@ int main(
             "unknown";
     }
 
+    const bool dirty =
+        working_tree_dirty();
+
+    warn_if_working_tree_dirty(
+        dirty,
+        git_commit
+    );
+
     cout
         << "================================\n";
 
@@ -3639,6 +3748,10 @@ int main(
         object.string_field(
             "current_commit",
             git_commit
+        );
+        object.bool_field(
+            "working_tree_dirty",
+            dirty
         );
         object.number_field(
             "baseline_median_us",
