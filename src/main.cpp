@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -723,19 +724,49 @@ Options parse_options(
             const string value =
                 argv[++index];
 
+            size_t consumed = 0;
+
             try {
                 if (
                     argument == "--threshold"
                 ) {
                     options.threshold_percent =
-                        stod(value);
+                        stod(value, &consumed);
                 }
                 else {
                     options.runs =
-                        stoi(value);
+                        stoi(value, &consumed);
                 }
             }
             catch (...) {
+                record_error(
+                    options,
+                    argument +
+                        " was given \"" +
+                        value +
+                        "\", which is not a number."
+                );
+
+                continue;
+            }
+
+            // stod and stoi stop at the first character they cannot
+            // use, so "10abc" reads as 10 and a typo lands as a
+            // quietly different number. A value counts as a number
+            // only when the whole of it is one, and a threshold has to
+            // be finite besides: a NaN threshold fails every ">"
+            // comparison, so every verdict from it would be "no
+            // regression" -- a green check from an input that decided
+            // nothing.
+            if (
+                consumed != value.size() ||
+                (
+                    argument == "--threshold" &&
+                    !isfinite(
+                        options.threshold_percent
+                    )
+                )
+            ) {
                 record_error(
                     options,
                     argument +

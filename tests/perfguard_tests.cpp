@@ -1430,6 +1430,25 @@ void test_cli_contract(
         "a bad option value still reaches --json written after it"
     );
 
+    // stod and stoi read a prefix and stop there, so "10x" would be
+    // taken as 10, and stod reads "nan" as a number that fails every
+    // ">" comparison and turns every verdict into "no regression".
+    // Neither is a value the caller can have meant.
+    const CliResult partly_numeric =
+        run_cli(perfguard, "--check --threshold 10x --json");
+
+    check(
+        partly_numeric.exit_code == 2 &&
+        partly_numeric.out.find("is not a number") != string::npos,
+        "a partly numeric threshold exits 2 as not a number"
+    );
+
+    check(
+        run_cli(perfguard, "--check --runs 2x --json").exit_code == 2 &&
+        run_cli(perfguard, "--check --threshold nan --json").exit_code == 2,
+        "a truncated or non-finite option value exits 2"
+    );
+
     const CliResult json_short =
         run_cli(perfguard, "--diagnose --json");
 
