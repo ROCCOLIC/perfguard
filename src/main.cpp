@@ -2354,6 +2354,19 @@ int main(
                     stats_json(measurement)
                 );
                 object.object_field(
+                    "baseline_stats",
+                    stats_json(baseline_stats)
+                );
+                object.object_field(
+                    "current_stats",
+                    stats_json(measurement)
+                );
+                add_noise_field(
+                    object,
+                    baseline_stats,
+                    measurement
+                );
+                object.object_field(
                     "metadata",
                     metadata_json(
                         environment_baseline()
