@@ -114,10 +114,11 @@ independently noisy medians, so both sides contribute to it. A change
 within a noise that reads as a large fraction of the threshold is one
 to measure again before acting on.
 
-The JSON documents carry the spread behind both medians, so the figure
-can be worked out from what the command wrote rather than only read off
-the verdict line. `--check` nests the two as `stats.baseline` and
-`stats.current`; the other commands pair `stats` with `baseline_stats`.
+The JSON documents carry the spread behind both medians, as
+`baseline_stats` and `current_stats`, so the figure can be worked out
+from what the command wrote rather than only read off the verdict line.
+`--check` also keeps the nested `stats.baseline` / `stats.current` it
+wrote before the pair existed.
 
 ## CI
 
