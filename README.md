@@ -61,6 +61,13 @@ or stashed.
 `--bisect-test` step. Human narration moves to stderr, so stdout carries
 the document alone.
 
+A command line the tool cannot parse is reported the same way, and for
+the same reason: a typo in a CI job is a case where the caller is
+reading stdout as a document, so a bad option or a missing argument
+produces `{"status": "error"}` there and the usage text goes to stderr
+with the reason. `--json` is honoured wherever it is written on the
+line, including after the word that went wrong.
+
 Because `--check` builds both sides, it takes minutes, not seconds.
 
 ## Exit codes

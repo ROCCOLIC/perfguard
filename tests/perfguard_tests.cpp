@@ -1399,6 +1399,53 @@ void test_cli_contract(
         "the document is the whole of stdout"
     );
 
+    // A command line that cannot be parsed is still a command line
+    // asked for a document, and the usage text is narration: it must
+    // not be the thing stdout carries. --json is written last here, as
+    // it is in the CI examples, so the parse must reach it after the
+    // word it could not understand rather than stop there.
+    const CliResult json_unknown =
+        run_cli(perfguard, "--check --not-a-command --json");
+
+    check(
+        json_unknown.exit_code == 2 &&
+        json_unknown.out.find("\"status\": \"error\"") != string::npos,
+        "an unknown option writes an error document under --json"
+    );
+
+    check(
+        json_unknown.out.find("Usage:") == string::npos &&
+        json_unknown.err.find("Usage:") != string::npos,
+        "the usage text moves to stderr under --json"
+    );
+
+    const CliResult json_bad_value =
+        run_cli(perfguard, "--check --runs nope --json");
+
+    check(
+        json_bad_value.exit_code == 2 &&
+        json_bad_value.out.find("\"command\": \"--check\"") != string::npos &&
+        json_bad_value.out.find("\"status\": \"error\"") != string::npos &&
+        json_bad_value.out.find("Usage:") == string::npos,
+        "a bad option value still reaches --json written after it"
+    );
+
+    const CliResult json_short =
+        run_cli(perfguard, "--diagnose --json");
+
+    check(
+        json_short.exit_code == 2 &&
+        json_short.out.find("\"command\": \"--diagnose\"") != string::npos &&
+        json_short.out.find("\"status\": \"error\"") != string::npos,
+        "a command given too few arguments writes an error document under --json"
+    );
+
+    check(
+        json_short.out.find("Usage:") == string::npos &&
+        json_short.err.find("--diagnose needs a commit.") != string::npos,
+        "its usage text and reason both move to stderr"
+    );
+
     // The default command needs a project to read a baseline from,
     // and says so in a document rather than only in prose.
     const fs::path outside =

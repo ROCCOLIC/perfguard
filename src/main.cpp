@@ -586,9 +586,32 @@ int required_arguments(
 }
 
 
+// The first thing that could not be understood is the one reported.
+// Later ones are usually consequences of it, and naming the last would
+// point past the mistake that caused them.
+void record_error(
+    Options& options,
+    const string& message
+)
+{
+    if (
+        options.error.empty()
+    ) {
+        options.error = message;
+    }
+}
+
+
 // Parses the whole command line in one pass, so that options may be
 // written before or after the command: "perfguard --check --threshold 5"
 // and "perfguard --threshold 5 --check" mean the same thing.
+//
+// A word it cannot understand stops it from being taken as a command
+// or as an argument, but not from reading the rest of the line: --json
+// is what decides whether an error is reported as a document, and it
+// may be written after the word that went wrong. Returning at the
+// first error would report an error that was asked to be a document as
+// prose on the wrong stream.
 Options parse_options(
     int argc,
     char* argv[]
@@ -646,11 +669,13 @@ Options parse_options(
             if (
                 index + 1 >= argc
             ) {
-                options.error =
+                record_error(
+                    options,
                     argument +
-                    " needs a value.";
+                        " needs a value."
+                );
 
-                return options;
+                break;
             }
 
             const string value =
@@ -669,33 +694,39 @@ Options parse_options(
                 }
             }
             catch (...) {
-                options.error =
+                record_error(
+                    options,
                     argument +
-                    " was given \"" +
-                    value +
-                    "\", which is not a number.";
+                        " was given \"" +
+                        value +
+                        "\", which is not a number."
+                );
 
-                return options;
+                continue;
             }
 
             if (
                 argument == "--threshold" &&
                 options.threshold_percent <= 0.0
             ) {
-                options.error =
-                    "--threshold must be positive.";
+                record_error(
+                    options,
+                    "--threshold must be positive."
+                );
 
-                return options;
+                continue;
             }
 
             if (
                 argument == "--runs" &&
                 options.runs <= 0
             ) {
-                options.error =
-                    "--runs must be positive.";
+                record_error(
+                    options,
+                    "--runs must be positive."
+                );
 
-                return options;
+                continue;
             }
 
             continue;
@@ -708,12 +739,14 @@ Options parse_options(
             argument[0] == '-' &&
             !is_known_command(argument)
         ) {
-            options.error =
+            record_error(
+                options,
                 "Unknown option \"" +
-                argument +
-                "\".";
+                    argument +
+                    "\"."
+            );
 
-            return options;
+            continue;
         }
 
         options.arguments.push_back(
@@ -1896,6 +1929,11 @@ int main(
     if (
         !options.error.empty()
     ) {
+        // The usage text is narration for a human, so under --json it
+        // belongs on the same stream everything else narrated goes to,
+        // and stdout keeps holding the document alone.
+        HumanOutputGuard guard(options.json);
+
         cerr
             << "ERROR: "
             << options.error
@@ -1904,7 +1942,17 @@ int main(
         cout
             << usage_text();
 
-        return 2;
+        // No command was settled on, so the document names the first
+        // word given when there was one and is left empty when the
+        // command line failed before any word was understood.
+        return fail_with_json(
+            guard,
+            options,
+            options.arguments.empty()
+                ? ""
+                : options.arguments[0],
+            options.error
+        );
     }
 
     if (
@@ -1943,21 +1991,31 @@ int main(
                 options.arguments.size()
             ) < required_arguments(command)
         ) {
-            cerr
-                << "ERROR: "
-                << command
-                << " needs "
-                << (
+            const string message =
+                command +
+                " needs " +
+                (
                     command == "--bisect-test"
                         ? "a baseline and a threshold."
                         : "a commit."
-                )
+                );
+
+            HumanOutputGuard guard(options.json);
+
+            cerr
+                << "ERROR: "
+                << message
                 << "\n\n";
 
             cout
                 << usage_text();
 
-            return 2;
+            return fail_with_json(
+                guard,
+                options,
+                command,
+                message
+            );
         }
     }
 
