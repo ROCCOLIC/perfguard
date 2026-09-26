@@ -577,7 +577,7 @@ BisectResult run_bisect(
             "git -C \"" +
             root.string() +
             "\" status --porcelain",
-            true
+            false
         );
 
     if (

@@ -100,10 +100,14 @@ string get_git_commit()
 
 bool working_tree_dirty()
 {
+    // The emptiness of the output is the answer, so stderr is not
+    // merged into it: a warning git chose to print on a clean tree
+    // would otherwise read as a changed file. Failure to run at all is
+    // caught by the exit code.
     const CommandResult status =
         run_command(
             "git status --porcelain",
-            true
+            false
         );
 
     return
@@ -1301,7 +1305,7 @@ int run_baseline_mode(
             "git -C \"" +
             project_root.string() +
             "\" status --porcelain",
-            true
+            false
         );
 
     if (
