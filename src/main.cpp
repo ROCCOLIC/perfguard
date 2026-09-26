@@ -30,6 +30,27 @@ namespace fs = std::filesystem;
 const string BASELINE_PATH =
     ".perfguard/baseline.json";
 
+const string REPORT_FILE_NAME =
+    "perfguard-report.md";
+
+
+// ============================================================
+// Report file
+//
+// The report describes this project's benchmark, so it is written
+// into the project rather than into whatever directory the command
+// was run from. Relative to the caller's directory it would land
+// wherever they happened to stand, and could overwrite an unrelated
+// file of the same name.
+// ============================================================
+
+fs::path report_file()
+{
+    return
+        find_project_root() /
+        REPORT_FILE_NAME;
+}
+
 
 // ============================================================
 // Git commit
@@ -2135,8 +2156,11 @@ int main(
         cout
             << "[4/4] Generating report...\n\n";
 
+        const fs::path report_path =
+            report_file();
+
         ofstream report(
-            "perfguard-report.md"
+            report_path
         );
 
         if (
@@ -2144,9 +2168,16 @@ int main(
         ) {
             cerr
                 << "ERROR: Could not create "
-                   "perfguard-report.md\n";
+                << report_path.string()
+                << "\n";
 
-            return 2;
+            return fail_with_json(
+                guard,
+                options,
+                "analyze",
+                "Could not create " +
+                    report_path.string()
+            );
         }
 
         report
@@ -2162,7 +2193,9 @@ int main(
             << "## Benchmark\n\n";
 
         report
-            << "- Name: `sort_1m`\n";
+            << "- Name: `"
+            << BENCHMARK_NAME
+            << "`\n";
 
         report
             << "- Runs: "
@@ -2407,7 +2440,9 @@ int main(
 
         cout
             << "Report:\n"
-            << "  perfguard-report.md\n";
+            << "  "
+            << report_path.string()
+            << "\n";
 
         if (
             options.json
@@ -2525,7 +2560,7 @@ int main(
             );
             object.string_field(
                 "report",
-                "perfguard-report.md"
+                report_path.string()
             );
 
             emit_json(guard, object);
@@ -2651,8 +2686,11 @@ int main(
         // Generate Markdown
         // ----------------------------------------------------
 
+        const fs::path report_path =
+            report_file();
+
         ofstream report(
-            "perfguard-report.md"
+            report_path
         );
 
         if (
@@ -2660,9 +2698,16 @@ int main(
         ) {
             cerr
                 << "ERROR: Could not create "
-                   "perfguard-report.md\n";
+                << report_path.string()
+                << "\n";
 
-            return 2;
+            return fail_with_json(
+                guard,
+                options,
+                "report",
+                "Could not create " +
+                    report_path.string()
+            );
         }
 
         report
@@ -2686,7 +2731,9 @@ int main(
             << "## Benchmark\n\n";
 
         report
-            << "- Name: `sort_1m`\n";
+            << "- Name: `"
+            << BENCHMARK_NAME
+            << "`\n";
 
         report
             << "- Runs: "
@@ -2874,7 +2921,9 @@ int main(
 
         cout
             << "\nReport generated:\n"
-            << "  perfguard-report.md\n";
+            << "  "
+            << report_path.string()
+            << "\n";
 
         if (
             options.json
@@ -2924,7 +2973,7 @@ int main(
             );
             object.string_field(
                 "report",
-                "perfguard-report.md"
+                report_path.string()
             );
 
             emit_json(guard, object);

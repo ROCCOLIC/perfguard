@@ -42,7 +42,7 @@ or stashed.
 |---|---|
 | `baseline` | Measure the working tree and store it |
 | `--check` | Build and measure the baseline commit and HEAD, then compare |
-| `--report` | Compare the stored baseline against a fresh measurement, write a Markdown report |
+| `--report` | Compare the stored baseline against a fresh measurement, write `perfguard-report.md` into the project root |
 | `--analyze` | Compare the working tree against the stored baseline, then bisect, diagnose and report |
 | `--bisect` | Find the first bad commit |
 | `--diagnose <commit>` | Build one commit and compare it |
