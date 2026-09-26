@@ -55,7 +55,7 @@ or stashed.
 | Option | Meaning |
 |---|---|
 | `--threshold <percent>` | Regression threshold (default 10) |
-| `--runs <n>` | Samples per side (default 9 for `--check`) |
+| `--runs <n>` | Samples to take (default 5, or 9 per side for `--check`) |
 | `--json` | Machine-readable output on stdout |
 | `--force` | `--bisect` / `--analyze`: discard a bisect session already in progress |
 
@@ -73,6 +73,11 @@ written on the line, including after the word that went wrong.
 A command name the tool does not know is one of those errors rather than
 a request for the default benchmark: `perfguard chek` reports the typo
 instead of measuring and handing back a verdict.
+
+An option value has to be a whole, finite number. `--threshold 10x` and
+`--runs 3.7` are refused rather than read as 10 and as 3, and
+`--threshold nan` is refused rather than read as a threshold that fails
+every comparison and reports no regression.
 
 Because `--check` builds both sides, it takes minutes, not seconds.
 
