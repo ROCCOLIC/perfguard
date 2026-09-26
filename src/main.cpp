@@ -4017,17 +4017,43 @@ int main(
     cout
         << "\n";
 
+    // The stored baseline records the spread of the samples behind its
+    // median, so the noise this comparison was decided within can be
+    // reported here without building anything a second time.
+    Stats baseline_stats;
+
+    baseline_stats.samples = stored_baseline.runs;
+    baseline_stats.min_us = stored_baseline.min_us;
+    baseline_stats.max_us = stored_baseline.max_us;
+    baseline_stats.median_us = stored_baseline.median_us;
+    baseline_stats.mean_us = stored_baseline.average_us;
+    baseline_stats.stdev_us = stored_baseline.stdev_us;
+
     if (
         regression
     ) {
         cout
-            << "WARNING: Performance Regression!\n";
+            << "WARNING: Performance Regression!";
+
+        cout
+            << noise_suffix(
+                baseline_stats,
+                measurement
+            )
+            << "\n";
 
         return 1;
     }
 
     cout
-        << "Performance OK.\n";
+        << "Performance OK.";
+
+    cout
+        << noise_suffix(
+            baseline_stats,
+            measurement
+        )
+        << "\n";
 
     return 0;
 }
