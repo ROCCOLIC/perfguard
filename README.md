@@ -14,7 +14,9 @@ benchmark in one session, on one machine, and comparing medians.
 | `sort_1m` | the benchmark it measures |
 | `perfguard_tests` | tests for the parsing, statistics and baseline code |
 
-Run the tests with `./build/Debug/perfguard_tests.exe`, or `ctest --test-dir build -C Debug`.
+Run the tests with `./build/Debug/perfguard_tests.exe`, or
+`ctest --test-dir build -C Debug`. The CLI part measures the benchmark,
+so the suite takes some seconds rather than none.
 
 ## First run: record a baseline
 
