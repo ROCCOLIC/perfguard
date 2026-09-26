@@ -1362,6 +1362,28 @@ void test_cli_contract(
         "a command given too few arguments exits 2"
     );
 
+    // A command takes a fixed number of words, and one more would have
+    // been dropped in silence -- for --check, behind a full build of
+    // both sides.
+    const CliResult extra_argument =
+        run_cli(perfguard, "--evidence 41f6091 HEAD --json");
+
+    check(
+        extra_argument.exit_code == 2 &&
+        extra_argument.out.find("\"status\": \"error\"") != string::npos &&
+        extra_argument.out.find("takes a commit") != string::npos,
+        "a command given too many arguments exits 2 and says so"
+    );
+
+    check(
+        run_cli(perfguard, "--check extra --json").exit_code == 2 &&
+        run_cli(
+            perfguard,
+            "--simulate-regression extra --json"
+        ).exit_code == 2,
+        "the extra word is refused rather than dropped"
+    );
+
     check(
         run_cli(perfguard, "--threshold nope --check").exit_code == 2,
         "a non-numeric threshold exits 2"

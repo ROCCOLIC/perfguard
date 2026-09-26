@@ -822,6 +822,15 @@ Options parse_options(
             continue;
         }
 
+        // An empty word carries nothing: it is what an unset variable
+        // expands to inside quotes. Dropping it keeps the words that
+        // follow about the words that mean something.
+        if (
+            argument.empty()
+        ) {
+            continue;
+        }
+
         options.arguments.push_back(
             argument
         );
@@ -2112,30 +2121,50 @@ int main(
         return 0;
     }
 
-    // A command given too few arguments must say so. Without this it
-    // would match no branch below and fall through to the plain
-    // benchmark run, measuring the working tree as though that were
-    // what was asked for.
+    // A command takes a fixed number of words, and a line that gives
+    // it another number has the caller having meant something else.
+    // Too few would match no branch below and fall through to the
+    // plain benchmark run, measuring the working tree as though that
+    // were what was asked for; too many would have the extra word
+    // dropped in silence, which is the same silence a mistyped command
+    // name was given.
     if (
         !options.arguments.empty()
     ) {
         const string command =
             options.arguments[0];
 
-        if (
-            is_known_command(command) &&
+        const int given =
             static_cast<int>(
                 options.arguments.size()
-            ) < required_arguments(command)
+            );
+
+        const int required =
+            required_arguments(command);
+
+        if (
+            is_known_command(command) &&
+            given != required
         ) {
+            const string taken =
+                command == "--bisect-test"
+                    ? "a baseline and a threshold"
+                    : (
+                        command == "--diagnose" ||
+                        command == "--evidence"
+                    )
+                        ? "a commit"
+                        : "no arguments";
+
             const string message =
                 command +
-                " needs " +
                 (
-                    command == "--bisect-test"
-                        ? "a baseline and a threshold."
-                        : "a commit."
-                );
+                    given < required
+                        ? " needs "
+                        : " takes "
+                ) +
+                taken +
+                ".";
 
             HumanOutputGuard guard(options.json);
 

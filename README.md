@@ -65,14 +65,17 @@ the document alone.
 
 A command line the tool cannot parse is reported the same way, and for
 the same reason: a typo in a CI job is a case where the caller is
-reading stdout as a document, so a bad option, a bad command or a
-missing argument produces `{"status": "error"}` there and the usage text
-goes to stderr with the reason. `--json` is honoured wherever it is
-written on the line, including after the word that went wrong.
+reading stdout as a document, so a bad option, a bad command, a missing
+argument or a surplus one produces `{"status": "error"}` there and the
+usage text goes to stderr with the reason. `--json` is honoured wherever
+it is written on the line, including after the word that went wrong.
 
 A command name the tool does not know is one of those errors rather than
 a request for the default benchmark: `perfguard chek` reports the typo
-instead of measuring and handing back a verdict.
+instead of measuring and handing back a verdict. A command takes a fixed
+number of words for the same reason, so `perfguard --evidence 41f6091
+HEAD` refuses the word it has no use for rather than dropping it in
+silence.
 
 An option value has to be a whole, finite number. `--threshold 10x` and
 `--runs 3.7` are refused rather than read as 10 and as 3, and
