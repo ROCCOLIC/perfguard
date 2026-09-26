@@ -1031,6 +1031,34 @@ JsonObject stats_json(
 }
 
 
+// The noise a human verdict line reports, as a number in the same
+// percent as the change and the threshold, so a document reader does not
+// have to know the formula. Left out when neither side carries a spread
+// to draw it from, rather than written as a zero that would read as a
+// perfectly steady measurement.
+void add_noise_field(
+    JsonObject& object,
+    const Stats& first,
+    const Stats& second
+)
+{
+    if (
+        !noise_measurable(first) &&
+        !noise_measurable(second)
+    ) {
+        return;
+    }
+
+    object.number_field(
+        "noise_percent",
+        noise_magnitude(
+            first,
+            second
+        )
+    );
+}
+
+
 JsonObject metadata_json(
     const Baseline& baseline
 )
@@ -1841,6 +1869,12 @@ int run_check_mode(
         object.object_field(
             "current_stats",
             stats_json(current_stats)
+        );
+
+        add_noise_field(
+            object,
+            baseline_stats,
+            current_stats
         );
 
         object.object_field(
@@ -2889,6 +2923,11 @@ int main(
                 "current_stats",
                 stats_json(diagnosis.stats)
             );
+            add_noise_field(
+                impact,
+                diagnosis.baseline_stats,
+                diagnosis.stats
+            );
 
             object.object_field(
                 "diagnosis",
@@ -2906,6 +2945,11 @@ int main(
             object.object_field(
                 "current_stats",
                 stats_json(measurement)
+            );
+            add_noise_field(
+                object,
+                baseline_stats,
+                measurement
             );
             object.object_field(
                 "metadata",
@@ -3363,6 +3407,11 @@ int main(
                 "current_stats",
                 stats_json(measurement)
             );
+            add_noise_field(
+                object,
+                baseline_stats,
+                measurement
+            );
             object.object_field(
                 "metadata",
                 metadata_json(
@@ -3495,6 +3544,11 @@ int main(
             object.object_field(
                 "current_stats",
                 stats_json(diagnosis.stats)
+            );
+            add_noise_field(
+                object,
+                diagnosis.baseline_stats,
+                diagnosis.stats
             );
 
             emit_json(guard, object);
@@ -4096,6 +4150,11 @@ int main(
         object.object_field(
             "current_stats",
             stats_json(measurement)
+        );
+        add_noise_field(
+            object,
+            baseline_stats,
+            measurement
         );
         object.object_field(
             "metadata",
