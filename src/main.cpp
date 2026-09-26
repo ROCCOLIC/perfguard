@@ -448,7 +448,9 @@ string usage_text()
         "                           commit and HEAD, then compare medians\n"
         "  --report                 Compare the stored baseline against a\n"
         "                           fresh measurement, and write a report\n"
-        "  --analyze                Check, bisect, diagnose and report\n"
+        "  --analyze                Compare the stored baseline against\n"
+        "                           the working tree, then bisect,\n"
+        "                           diagnose and report\n"
         "  --bisect                 Find the first bad commit\n"
         "  --diagnose <commit>      Build one commit and compare it\n"
         "  --evidence <commit>      Show what a commit changed\n"
@@ -461,8 +463,9 @@ string usage_text()
         "Options:\n"
         "  --threshold <percent>    Regression threshold (default 10)\n"
         "  --runs <n>               Samples to take (default: per command)\n"
-        "  --force                  --bisect: discard a bisect session that\n"
-        "                           is already in progress\n"
+        "  --force                  --bisect and --analyze: discard a\n"
+        "                           bisect session that is already in\n"
+        "                           progress\n"
         "  --json                   Machine-readable output on stdout\n"
         "                           (supported by baseline, the plain\n"
         "                           benchmark run, --check and --diagnose)\n"
@@ -1831,7 +1834,8 @@ int main(
         BisectResult bisect_result =
             run_bisect(
                 perfguard_executable.string(),
-                options.force
+                options.force,
+                options.threshold_percent
             );
 
         if (
@@ -2839,7 +2843,8 @@ int main(
         const BisectResult result =
             run_bisect(
                 perfguard_executable.string(),
-                options.force
+                options.force,
+                options.threshold_percent
             );
 
         if (

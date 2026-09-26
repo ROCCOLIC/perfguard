@@ -36,7 +36,7 @@ so every checkout records its own.
 | `baseline` | Measure the working tree and store it |
 | `--check` | Build and measure the baseline commit and HEAD, then compare |
 | `--report` | Compare the stored baseline against a fresh measurement, write a Markdown report |
-| `--analyze` | `--check`, then bisect, diagnose and report |
+| `--analyze` | Compare the working tree against the stored baseline, then bisect, diagnose and report |
 | `--bisect` | Find the first bad commit |
 | `--diagnose <commit>` | Build one commit and compare it |
 | `--evidence <commit>` | Show what a commit changed |
@@ -48,7 +48,7 @@ so every checkout records its own.
 | `--threshold <percent>` | Regression threshold (default 10) |
 | `--runs <n>` | Samples per side (default 9 for `--check`) |
 | `--json` | Machine-readable output on stdout |
-| `--force` | `--bisect`: discard a bisect session already in progress |
+| `--force` | `--bisect` / `--analyze`: discard a bisect session already in progress |
 
 `--json` is supported by `baseline`, the plain benchmark run, `--check`
 and `--diagnose`. Human narration moves to stderr, so stdout carries the

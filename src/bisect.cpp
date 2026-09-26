@@ -2,9 +2,7 @@
 
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
-#include <regex>
 #include <string>
 
 #define WIN32_LEAN_AND_MEAN
@@ -221,85 +219,6 @@ BOOL WINAPI bisect_console_handler(
 }
 
 } // namespace
-
-// ============================================================
-// Baseline
-// ============================================================
-
-bool read_baseline(
-    const fs::path& root,
-    string& commit,
-    double& average_us
-)
-{
-    fs::path baseline_path =
-        root /
-        ".perfguard" /
-        "baseline.json";
-
-    if (!fs::exists(baseline_path))
-    {
-        return false;
-    }
-
-    ifstream file(
-        baseline_path
-    );
-
-    if (!file)
-    {
-        return false;
-    }
-
-    string content(
-        (
-            istreambuf_iterator<char>(file)
-        ),
-        istreambuf_iterator<char>()
-    );
-
-    regex commit_pattern(
-        R"PG("commit"\s*:\s*"([^"]+)")PG"
-    );
-
-    regex average_pattern(
-        R"PG("average_us"\s*:\s*([0-9]+(?:\.[0-9]+)?))PG"
-    );
-
-    smatch match;
-
-    if (
-        !regex_search(
-            content,
-            match,
-            commit_pattern
-        )
-    )
-    {
-        return false;
-    }
-
-    commit =
-        match[1].str();
-
-    if (
-        !regex_search(
-            content,
-            match,
-            average_pattern
-        )
-    )
-    {
-        return false;
-    }
-
-    average_us =
-        stod(
-            match[1].str()
-        );
-
-    return true;
-}
 
 // ============================================================
 // Bisect test
@@ -570,7 +489,8 @@ int run_bisect_test(
 
 BisectResult run_bisect(
     const string& executable_path,
-    bool force
+    bool force,
+    double threshold_percent
 )
 {
     BisectResult result;
@@ -588,23 +508,53 @@ BisectResult run_bisect(
 
     // --------------------------------------------------------
     // Read baseline BEFORE Git starts changing HEAD
+    //
+    // Through the reader and the comparability check the rest of
+    // the tool uses, and for the same figure: the median a verdict
+    // is drawn from. This used to parse the file a second time,
+    // here, and take the average a version 1 baseline recorded
+    // next to it -- a different statistic from the one the
+    // regression was detected with.
     // --------------------------------------------------------
 
-    double baseline_us = 0.0;
+    Baseline stored;
+
+    string baseline_error;
 
     if (
         !read_baseline(
             root,
-            result.baseline_commit,
-            baseline_us
+            stored,
+            baseline_error
         )
     )
     {
         result.error =
-            "Could not read baseline.";
+            baseline_error;
 
         return result;
     }
+
+    string reason;
+
+    if (
+        !baseline_comparable(
+            stored,
+            reason
+        )
+    )
+    {
+        result.error =
+            reason;
+
+        return result;
+    }
+
+    result.baseline_commit =
+        stored.commit;
+
+    const double baseline_us =
+        stored.median_us;
 
     if (
         !is_valid_commit_hash(
@@ -719,7 +669,7 @@ BisectResult run_bisect(
         << "\n";
 
     cout
-        << "Baseline average: "
+        << "Baseline median: "
         << baseline_us
         << " us\n";
 
@@ -810,7 +760,7 @@ BisectResult run_bisect(
         " --bisect-test " +
         to_string(baseline_us) +
         " " +
-        to_string(DEFAULT_THRESHOLD_PERCENT);
+        to_string(threshold_percent);
 
     CommandResult bisect =
         run_command(
