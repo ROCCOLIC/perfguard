@@ -550,7 +550,7 @@ string usage_text()
         "                           for it\n"
         "  --bisect-test <us> <pct> Internal: one git bisect step\n"
         "  --help, -h               Show this text\n"
-        "  --version, -V            Show the version\n"
+        "  --version, -V, -v        Show the version\n"
         "\n"
         "Options:\n"
         "  --threshold <percent>    Regression threshold (default 10)\n"
