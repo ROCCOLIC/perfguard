@@ -240,116 +240,6 @@ bool load_comparable_baseline(
 
 
 // ============================================================
-// Show commit evidence
-// ============================================================
-
-// Returns the process exit code: a commit whose evidence cannot be
-// read is a failed command, not a report about the commit.
-int show_commit_evidence(
-    const string& commit
-)
-{
-    EvidenceReport report =
-        analyze_commit(
-            commit
-        );
-
-    if (
-        !report.success
-    ) {
-        cerr
-            << "Evidence analysis failed: "
-            << report.error
-            << "\n";
-
-        return 2;
-    }
-
-    cout
-        << "\n";
-
-    cout
-        << "========================================\n";
-
-    cout
-        << "Commit Evidence\n";
-
-    cout
-        << "========================================\n";
-
-    cout
-        << "\n";
-
-    cout
-        << "Commit: "
-        << report.commit
-        << "\n";
-
-    cout
-        << "Message: "
-        << report.message
-        << "\n";
-
-    cout
-        << "Author: "
-        << report.author
-        << "\n";
-
-    cout
-        << "\nChanged files:\n";
-
-    for (
-        const auto& file :
-        report.changed_files
-    ) {
-        cout
-            << "  "
-            << file
-            << "\n";
-    }
-
-    cout
-        << "\nChange summary:\n";
-
-    cout
-        << "  Lines added:   "
-        << report.lines_added
-        << "\n";
-
-    cout
-        << "  Lines removed: "
-        << report.lines_removed
-        << "\n";
-
-    cout
-        << "\nPotential performance evidence:\n";
-
-    if (
-        report.performance_evidence.empty()
-    ) {
-        cout
-            << "  None detected.\n";
-    }
-    else {
-        for (
-            const auto& line :
-            report.performance_evidence
-        ) {
-            cout
-                << "  "
-                << line
-                << "\n";
-        }
-    }
-
-    cout
-        << "\n";
-
-    return 0;
-}
-
-
-// ============================================================
 // Measurement summary
 // ============================================================
 
@@ -466,9 +356,8 @@ string usage_text()
         "  --force                  --bisect and --analyze: discard a\n"
         "                           bisect session that is already in\n"
         "                           progress\n"
-        "  --json                   Machine-readable output on stdout\n"
-        "                           (supported by baseline, the plain\n"
-        "                           benchmark run, --check and --diagnose)\n"
+        "  --json                   Machine-readable output on stdout,\n"
+        "                           for every command except --bisect-test\n"
         "\n"
         "Exit codes:\n"
         "  0  no regression\n"
@@ -732,6 +621,45 @@ public:
         );
     }
 
+    // An array of strings is written on one line, like the scalars:
+    // its elements are strings, so nothing inside it needs the
+    // document's indentation to be read.
+    void string_array_field(
+        const string& key,
+        const vector<string>& values
+    ) {
+        ostringstream text;
+
+        text
+            << "[";
+
+        for (
+            size_t index = 0;
+            index < values.size();
+            ++index
+        ) {
+            if (
+                index > 0
+            ) {
+                text
+                    << ", ";
+            }
+
+            text
+                << "\""
+                << json_escape(values[index])
+                << "\"";
+        }
+
+        text
+            << "]";
+
+        add_scalar(
+            key,
+            text.str()
+        );
+    }
+
     // The nested object is kept whole rather than serialized here: how
     // deep it sits in the document is not known until the document is
     // written, and it decides how far its fields are indented.
@@ -990,6 +918,149 @@ int fail_with_json(
     }
 
     return 2;
+}
+
+
+// ============================================================
+// Show commit evidence
+// ============================================================
+
+// Returns the process exit code: a commit whose evidence cannot be
+// read is a failed command, not a report about the commit.
+int show_commit_evidence(
+    const Options& options,
+    const string& commit
+)
+{
+    HumanOutputGuard guard(options.json);
+
+    EvidenceReport report =
+        analyze_commit(
+            commit
+        );
+
+    if (
+        !report.success
+    ) {
+        cerr
+            << "Evidence analysis failed: "
+            << report.error
+            << "\n";
+
+        return fail_with_json(
+            guard,
+            options,
+            "evidence",
+            report.error
+        );
+    }
+
+    cout
+        << "\n";
+
+    cout
+        << "========================================\n";
+
+    cout
+        << "Commit Evidence\n";
+
+    cout
+        << "========================================\n";
+
+    cout
+        << "\n";
+
+    cout
+        << "Commit: "
+        << report.commit
+        << "\n";
+
+    cout
+        << "Message: "
+        << report.message
+        << "\n";
+
+    cout
+        << "Author: "
+        << report.author
+        << "\n";
+
+    cout
+        << "\nChanged files:\n";
+
+    for (
+        const auto& file :
+        report.changed_files
+    ) {
+        cout
+            << "  "
+            << file
+            << "\n";
+    }
+
+    cout
+        << "\nChange summary:\n";
+
+    cout
+        << "  Lines added:   "
+        << report.lines_added
+        << "\n";
+
+    cout
+        << "  Lines removed: "
+        << report.lines_removed
+        << "\n";
+
+    cout
+        << "\nPotential performance evidence:\n";
+
+    if (
+        report.performance_evidence.empty()
+    ) {
+        cout
+            << "  None detected.\n";
+    }
+    else {
+        for (
+            const auto& line :
+            report.performance_evidence
+        ) {
+            cout
+                << "  "
+                << line
+                << "\n";
+        }
+    }
+
+    if (
+        options.json
+    ) {
+        JsonObject object;
+
+        object.string_field("command", "evidence");
+        object.string_field("status", "ok");
+        object.string_field("commit", report.commit);
+        object.string_field("short_commit", report.short_commit);
+        object.string_field("message", report.message);
+        object.string_field("author", report.author);
+        object.string_array_field(
+            "changed_files",
+            report.changed_files
+        );
+        object.int_field("lines_added", report.lines_added);
+        object.int_field("lines_removed", report.lines_removed);
+        object.string_array_field(
+            "performance_evidence",
+            report.performance_evidence
+        );
+
+        emit_json(guard, object);
+    }
+
+    cout
+        << "\n";
+
+    return 0;
 }
 
 
@@ -1694,6 +1765,11 @@ int main(
             "--analyze"
     )
     {
+        HumanOutputGuard guard(options.json);
+
+        const string current_commit =
+            get_git_commit();
+
         cout
             << "========================================\n";
 
@@ -1728,7 +1804,12 @@ int main(
                 << baseline_message
                 << "\n";
 
-            return baseline_exit_code;
+            return fail_with_json(
+                guard,
+                options,
+                "analyze",
+                baseline_message
+            );
         }
 
         const double baseline =
@@ -1754,7 +1835,12 @@ int main(
                 << measurement_error
                 << "\n";
 
-            return 2;
+            return fail_with_json(
+                guard,
+                options,
+                "analyze",
+                measurement_error
+            );
         }
 
         const double current =
@@ -1816,6 +1902,51 @@ int main(
             cout
                 << "\nNo performance regression detected.\n";
 
+            if (
+                options.json
+            ) {
+                JsonObject object;
+
+                object.string_field("command", "analyze");
+                object.string_field("status", "ok");
+                object.string_field(
+                    "baseline_commit",
+                    baseline_commit
+                );
+                object.string_field(
+                    "current_commit",
+                    current_commit
+                );
+                object.number_field(
+                    "baseline_median_us",
+                    baseline
+                );
+                object.number_field(
+                    "current_median_us",
+                    current
+                );
+                object.number_field(
+                    "change_percent",
+                    change
+                );
+                object.number_field(
+                    "threshold_percent",
+                    options.threshold_percent
+                );
+                object.object_field(
+                    "stats",
+                    stats_json(measurement)
+                );
+                object.object_field(
+                    "metadata",
+                    metadata_json(
+                        environment_baseline()
+                    )
+                );
+
+                emit_json(guard, object);
+            }
+
             return 0;
         }
 
@@ -1853,7 +1984,12 @@ int main(
                 << bisect_result.error
                 << "\n";
 
-            return 2;
+            return fail_with_json(
+                guard,
+                options,
+                "analyze",
+                bisect_result.error
+            );
         }
 
         const string first_bad_commit =
@@ -1866,7 +2002,12 @@ int main(
                 << "\nBisect did not return "
                    "a first bad commit.\n";
 
-            return 2;
+            return fail_with_json(
+                guard,
+                options,
+                "analyze",
+                "Bisect did not return a first bad commit."
+            );
         }
 
         cout
@@ -1895,7 +2036,12 @@ int main(
                 << evidence.error
                 << "\n";
 
-            return 2;
+            return fail_with_json(
+                guard,
+                options,
+                "analyze",
+                evidence.error
+            );
         }
 
         DiagnosisResult diagnosis =
@@ -1923,7 +2069,12 @@ int main(
                     << "\n--------------------\n";
             }
 
-            return 2;
+            return fail_with_json(
+                guard,
+                options,
+                "analyze",
+                diagnosis.error
+            );
         }
 
 
@@ -2208,6 +2359,128 @@ int main(
             << "Report:\n"
             << "  perfguard-report.md\n";
 
+        if (
+            options.json
+        ) {
+            JsonObject object;
+
+            object.string_field("command", "analyze");
+            object.string_field("status", "regression");
+            object.string_field(
+                "baseline_commit",
+                baseline_commit
+            );
+            object.string_field(
+                "current_commit",
+                current_commit
+            );
+            object.string_field(
+                "first_bad_commit",
+                first_bad_commit
+            );
+            object.number_field(
+                "baseline_median_us",
+                baseline
+            );
+            object.number_field(
+                "current_median_us",
+                current
+            );
+            object.number_field(
+                "change_percent",
+                change
+            );
+            object.number_field(
+                "threshold_percent",
+                options.threshold_percent
+            );
+
+            // The commit the bisect named, described the way
+            // --evidence describes it.
+            JsonObject first_bad;
+
+            first_bad.string_field(
+                "message",
+                evidence.message
+            );
+            first_bad.string_field(
+                "author",
+                evidence.author
+            );
+            first_bad.string_array_field(
+                "changed_files",
+                evidence.changed_files
+            );
+            first_bad.int_field(
+                "lines_added",
+                evidence.lines_added
+            );
+            first_bad.int_field(
+                "lines_removed",
+                evidence.lines_removed
+            );
+            first_bad.string_array_field(
+                "performance_evidence",
+                evidence.performance_evidence
+            );
+
+            object.object_field(
+                "first_bad_commit_details",
+                first_bad
+            );
+
+            // What the regression looks like at that commit, which is
+            // the figure the report's Diagnosis section carries.
+            JsonObject impact;
+
+            impact.number_field(
+                "baseline_median_us",
+                diagnosis.baseline_us
+            );
+            impact.number_field(
+                "current_median_us",
+                diagnosis.current_us
+            );
+            impact.number_field(
+                "change_percent",
+                diagnosis.change_percent
+            );
+            impact.number_field(
+                "threshold_percent",
+                diagnosis.threshold_percent
+            );
+            impact.bool_field(
+                "regression",
+                diagnosis.regression
+            );
+            impact.object_field(
+                "stats",
+                stats_json(diagnosis.stats)
+            );
+
+            object.object_field(
+                "diagnosis",
+                impact
+            );
+
+            object.object_field(
+                "stats",
+                stats_json(measurement)
+            );
+            object.object_field(
+                "metadata",
+                metadata_json(
+                    environment_baseline()
+                )
+            );
+            object.string_field(
+                "report",
+                "perfguard-report.md"
+            );
+
+            emit_json(guard, object);
+        }
+
         return 1;
     }
     // ========================================================
@@ -2222,6 +2495,8 @@ int main(
             "--report"
     )
     {
+        HumanOutputGuard guard(options.json);
+
         Baseline stored_baseline;
         string baseline_message;
 
@@ -2239,7 +2514,12 @@ int main(
                 << baseline_message
                 << "\n";
 
-            return baseline_exit_code;
+            return fail_with_json(
+                guard,
+                options,
+                "report",
+                baseline_message
+            );
         }
 
         const double baseline =
@@ -2287,7 +2567,12 @@ int main(
                 << measurement_error
                 << "\n";
 
-            return 2;
+            return fail_with_json(
+                guard,
+                options,
+                "report",
+                measurement_error
+            );
         }
 
         const double current =
@@ -2540,6 +2825,60 @@ int main(
         cout
             << "\nReport generated:\n"
             << "  perfguard-report.md\n";
+
+        if (
+            options.json
+        ) {
+            JsonObject object;
+
+            object.string_field("command", "report");
+            object.string_field(
+                "status",
+                regression
+                    ? "regression"
+                    : "ok"
+            );
+            object.string_field(
+                "baseline_commit",
+                baseline_commit
+            );
+            object.string_field(
+                "current_commit",
+                current_commit
+            );
+            object.number_field(
+                "baseline_median_us",
+                baseline
+            );
+            object.number_field(
+                "current_median_us",
+                current
+            );
+            object.number_field(
+                "change_percent",
+                change
+            );
+            object.number_field(
+                "threshold_percent",
+                options.threshold_percent
+            );
+            object.object_field(
+                "stats",
+                stats_json(measurement)
+            );
+            object.object_field(
+                "metadata",
+                metadata_json(
+                    environment_baseline()
+                )
+            );
+            object.string_field(
+                "report",
+                "perfguard-report.md"
+            );
+
+            emit_json(guard, object);
+        }
 
         return regression
             ? 1
@@ -2794,6 +3133,7 @@ int main(
     )
     {
         return show_commit_evidence(
+            options,
             options.arguments[1]
         );
     }
@@ -2840,6 +3180,8 @@ int main(
             "--bisect"
     )
     {
+        HumanOutputGuard guard(options.json);
+
         const BisectResult result =
             run_bisect(
                 perfguard_executable.string(),
@@ -2862,7 +3204,12 @@ int main(
                 << result.error
                 << "\n";
 
-            return 2;
+            return fail_with_json(
+                guard,
+                options,
+                "bisect",
+                result.error
+            );
         }
 
         cout
@@ -2878,6 +3225,25 @@ int main(
             << "Commit: "
             << result.first_bad_commit
             << "\n";
+
+        if (
+            options.json
+        ) {
+            JsonObject object;
+
+            object.string_field("command", "bisect");
+            object.string_field("status", "ok");
+            object.string_field(
+                "baseline_commit",
+                result.baseline_commit
+            );
+            object.string_field(
+                "first_bad_commit",
+                result.first_bad_commit
+            );
+
+            emit_json(guard, object);
+        }
 
         return 0;
     }
@@ -2897,6 +3263,8 @@ int main(
             "--simulate-regression"
     )
     {
+        HumanOutputGuard guard(options.json);
+
         cout
             << "================================\n";
 
@@ -2970,20 +3338,48 @@ int main(
             << options.threshold_percent
             << "%\n";
 
-        if (
+        const bool regression =
             change >
-            options.threshold_percent
-        ) {
-            cout
-                << "Result: REGRESSION\n";
-
-            return 1;
-        }
+            options.threshold_percent;
 
         cout
-            << "Result: OK\n";
+            << "Result: "
+            << (
+                regression
+                    ? "REGRESSION"
+                    : "OK"
+            )
+            << "\n";
 
-        return 0;
+        if (
+            options.json
+        ) {
+            JsonObject object;
+
+            object.string_field(
+                "command",
+                "simulate-regression"
+            );
+            object.string_field(
+                "status",
+                regression
+                    ? "regression"
+                    : "ok"
+            );
+            object.number_field("baseline_us", baseline);
+            object.number_field("current_us", average);
+            object.number_field("change_percent", change);
+            object.number_field(
+                "threshold_percent",
+                options.threshold_percent
+            );
+
+            emit_json(guard, object);
+        }
+
+        return regression
+            ? 1
+            : 0;
     }
 
 

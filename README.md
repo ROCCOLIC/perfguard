@@ -50,9 +50,9 @@ so every checkout records its own.
 | `--json` | Machine-readable output on stdout |
 | `--force` | `--bisect` / `--analyze`: discard a bisect session already in progress |
 
-`--json` is supported by `baseline`, the plain benchmark run, `--check`
-and `--diagnose`. Human narration moves to stderr, so stdout carries the
-document alone.
+`--json` is supported by every command except the internal
+`--bisect-test` step. Human narration moves to stderr, so stdout carries
+the document alone.
 
 Because `--check` builds both sides, it takes minutes, not seconds.
 
