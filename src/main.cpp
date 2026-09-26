@@ -431,7 +431,7 @@ double noise_magnitude(
 }
 
 
-string noise_suffix(
+string noise_text(
     const Stats& first,
     const Stats& second
 )
@@ -440,22 +440,60 @@ string noise_suffix(
         !noise_measurable(first) &&
         !noise_measurable(second)
     ) {
-        return " (noise not measurable)";
+        return "not measurable";
     }
 
-    ostringstream suffix;
+    ostringstream text;
 
-    suffix
-        << " (noise \xC2\xB1"
+    text
+        << "\xC2\xB1"
         << fixed
         << setprecision(2)
         << noise_magnitude(
             first,
             second
         )
-        << "%)";
+        << "%";
 
-    return suffix.str();
+    return text.str();
+}
+
+
+// The figure as a clause, for a line that has already said what it is
+// about.
+string noise_suffix(
+    const Stats& first,
+    const Stats& second
+)
+{
+    return
+        " (noise " +
+        noise_text(
+            first,
+            second
+        ) +
+        ")";
+}
+
+
+// A stored baseline in the shape a fresh measurement is described in,
+// so a comparison against it can report the noise from both sides
+// without measuring the baseline over again: its file records the same
+// figures, only written down instead of just taken.
+Stats stored_stats(
+    const Baseline& baseline
+)
+{
+    Stats stats;
+
+    stats.samples = baseline.runs;
+    stats.min_us = baseline.min_us;
+    stats.max_us = baseline.max_us;
+    stats.median_us = baseline.median_us;
+    stats.mean_us = baseline.average_us;
+    stats.stdev_us = baseline.stdev_us;
+
+    return stats;
 }
 
 
@@ -2133,6 +2171,12 @@ int main(
         const string baseline_commit =
             stored_baseline.commit;
 
+        // The comparison is against the stored figure rather than
+        // against a build of that commit, so its recorded spread is one
+        // of the two sides the noise is drawn from.
+        const Stats baseline_stats =
+            stored_stats(stored_baseline);
+
         Stats measurement;
 
         string measurement_error;
@@ -2216,7 +2260,7 @@ int main(
 
             cout
                 << noise_suffix(
-                    measurement,
+                    baseline_stats,
                     measurement
                 )
                 << "\n";
@@ -2282,7 +2326,7 @@ int main(
 
         cout
             << noise_suffix(
-                measurement,
+                baseline_stats,
                 measurement
             )
             << "\n\n";
@@ -3494,7 +3538,7 @@ int main(
 
         cout
             << noise_suffix(
-                diagnosis.stats,
+                diagnosis.baseline_stats,
                 diagnosis.stats
             )
             << "\n";
@@ -4041,14 +4085,8 @@ int main(
     // The stored baseline records the spread of the samples behind its
     // median, so the noise this comparison was decided within can be
     // reported here without building anything a second time.
-    Stats baseline_stats;
-
-    baseline_stats.samples = stored_baseline.runs;
-    baseline_stats.min_us = stored_baseline.min_us;
-    baseline_stats.max_us = stored_baseline.max_us;
-    baseline_stats.median_us = stored_baseline.median_us;
-    baseline_stats.mean_us = stored_baseline.average_us;
-    baseline_stats.stdev_us = stored_baseline.stdev_us;
+    const Stats baseline_stats =
+        stored_stats(stored_baseline);
 
     if (
         regression

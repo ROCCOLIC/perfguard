@@ -108,6 +108,27 @@ DiagnosisResult diagnose_commit(
     result.baseline_us =
         stored.median_us;
 
+    // Carried in the shape a fresh measurement is described in, so the
+    // caller can draw the noise of the comparison from both medians
+    // without reading the baseline a second time.
+    result.baseline_stats.samples =
+        stored.runs;
+
+    result.baseline_stats.min_us =
+        stored.min_us;
+
+    result.baseline_stats.max_us =
+        stored.max_us;
+
+    result.baseline_stats.median_us =
+        stored.median_us;
+
+    result.baseline_stats.mean_us =
+        stored.average_us;
+
+    result.baseline_stats.stdev_us =
+        stored.stdev_us;
+
     // ========================================================
     // Step 4
     // Build the commit

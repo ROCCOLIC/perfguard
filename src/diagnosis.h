@@ -23,6 +23,12 @@ struct DiagnosisResult {
     // than just the median it compares.
     perfguard::Stats stats;
 
+    // The spread the stored baseline recorded, in the same shape. The
+    // change reported here is the difference of two medians, and the
+    // noise of that difference is drawn from both sides, so a caller
+    // given only the target's spread would understate it.
+    perfguard::Stats baseline_stats;
+
     std::string error;
 
     // Compiler output from the failed build, empty when the build
