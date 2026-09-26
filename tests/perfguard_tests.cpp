@@ -1446,6 +1446,28 @@ void test_cli_contract(
         "its usage text and reason both move to stderr"
     );
 
+    // The first word is the command. A word that names none is a typo,
+    // not a quiet request for the default benchmark: answering it with
+    // a verdict would report on work that was never asked for.
+    const CliResult json_unknown_command =
+        run_cli(perfguard, "chek --json");
+
+    check(
+        json_unknown_command.exit_code == 2 &&
+        json_unknown_command.out.find(
+            "\"command\": \"chek\""
+        ) != string::npos &&
+        json_unknown_command.out.find("\"status\": \"error\"") !=
+            string::npos,
+        "an unknown command writes an error document under --json"
+    );
+
+    check(
+        json_unknown_command.out.find("\"command\": \"benchmark\"") ==
+            string::npos,
+        "an unknown command does not fall through to the benchmark run"
+    );
+
     // The default command needs a project to read a baseline from,
     // and says so in a document rather than only in prose.
     const fs::path outside =

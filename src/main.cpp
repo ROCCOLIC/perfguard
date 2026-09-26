@@ -796,6 +796,24 @@ Options parse_options(
         );
     }
 
+    // The first word is the command. A word that names no command is a
+    // typo, and reading it as "no command given" would run the default
+    // benchmark and hand back a verdict for work that was never asked
+    // for -- the failure a CI job is least able to notice.
+    if (
+        !options.arguments.empty() &&
+        !is_known_command(
+            options.arguments[0]
+        )
+    ) {
+        record_error(
+            options,
+            "Unknown command \"" +
+                options.arguments[0] +
+                "\"."
+        );
+    }
+
     return options;
 }
 
