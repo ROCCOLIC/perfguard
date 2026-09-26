@@ -1831,6 +1831,18 @@ int run_check_mode(
         );
 
         object.object_field("stats", stats);
+
+        // The pair every other command writes its two spreads under, so a
+        // reader that handles more than --check has one place to look.
+        object.object_field(
+            "baseline_stats",
+            stats_json(baseline_stats)
+        );
+        object.object_field(
+            "current_stats",
+            stats_json(current_stats)
+        );
+
         object.object_field(
             "metadata",
             metadata_json(environment)
@@ -2873,6 +2885,10 @@ int main(
                 "baseline_stats",
                 stats_json(diagnosis.baseline_stats)
             );
+            impact.object_field(
+                "current_stats",
+                stats_json(diagnosis.stats)
+            );
 
             object.object_field(
                 "diagnosis",
@@ -2886,6 +2902,10 @@ int main(
             object.object_field(
                 "baseline_stats",
                 stats_json(baseline_stats)
+            );
+            object.object_field(
+                "current_stats",
+                stats_json(measurement)
             );
             object.object_field(
                 "metadata",
@@ -3340,6 +3360,10 @@ int main(
                 stats_json(baseline_stats)
             );
             object.object_field(
+                "current_stats",
+                stats_json(measurement)
+            );
+            object.object_field(
                 "metadata",
                 metadata_json(
                     environment_baseline()
@@ -3467,6 +3491,10 @@ int main(
             object.object_field(
                 "baseline_stats",
                 stats_json(diagnosis.baseline_stats)
+            );
+            object.object_field(
+                "current_stats",
+                stats_json(diagnosis.stats)
             );
 
             emit_json(guard, object);
@@ -4064,6 +4092,10 @@ int main(
         object.object_field(
             "baseline_stats",
             stats_json(baseline_stats)
+        );
+        object.object_field(
+            "current_stats",
+            stats_json(measurement)
         );
         object.object_field(
             "metadata",
