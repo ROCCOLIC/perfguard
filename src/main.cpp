@@ -1097,6 +1097,56 @@ int run_baseline_mode(
         );
     }
 
+    // The number this records is measured from the benchmark built
+    // out of the working tree, while the commit it records is HEAD.
+    // Those two have to describe the same code: `git bisect` marks the
+    // recorded commit good and searches from it, so a tree with
+    // uncommitted changes would leave the search anchored to code that
+    // was never measured.
+    const CommandResult status =
+        run_command(
+            "git -C \"" +
+            project_root.string() +
+            "\" status --porcelain",
+            true
+        );
+
+    if (
+        status.exit_code != 0
+    ) {
+        cerr
+            << "ERROR: Could not read Git status.\n";
+
+        return fail_with_json(
+            guard,
+            options,
+            "baseline",
+            "Could not read Git status."
+        );
+    }
+
+    if (
+        !trim(status.output).empty()
+    ) {
+        const string message =
+            "The working tree is not clean, so the recorded commit "
+            "would not be the code that was measured.\n"
+            "Commit or stash the changes, then run:\n"
+            "  perfguard baseline";
+
+        cerr
+            << "ERROR: "
+            << message
+            << "\n";
+
+        return fail_with_json(
+            guard,
+            options,
+            "baseline",
+            message
+        );
+    }
+
     const int samples =
         options.runs > 0
             ? options.runs

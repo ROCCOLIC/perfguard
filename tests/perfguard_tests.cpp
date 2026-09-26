@@ -1423,6 +1423,55 @@ void test_cli_contract(
         "a run outside a project writes an error document"
     );
 
+    // A baseline names a commit, so it may only be recorded from a
+    // tree that commit describes. This runs in a throwaway repository
+    // so the refusal is read without touching this checkout's baseline.
+    const fs::path scratch =
+        session_temp_directory() /
+        "dirty-tree";
+
+    fs::create_directories(scratch, error);
+
+    const CommandResult initialised =
+        run_command(
+            "cd /d \"" +
+            scratch.string() +
+            "\" && git init",
+            true,
+            60000
+        );
+
+    if (initialised.exit_code != 0) {
+        printf("SKIP: could not create a scratch repository\n");
+        return;
+    }
+
+    // The untracked file is what makes the tree dirty; a project root
+    // is recognised by a .git directory beside a CMakeLists.txt.
+    write_text_file(
+        scratch / "CMakeLists.txt",
+        "# scratch\n"
+    );
+
+    const CliResult dirty =
+        run_cli(perfguard, "baseline --json", scratch);
+
+    check(
+        dirty.exit_code == 2,
+        "baseline from a dirty tree exits 2"
+    );
+
+    check(
+        dirty.out.find("\"command\": \"baseline\"") != string::npos &&
+        dirty.out.find("\"status\": \"error\"") != string::npos,
+        "baseline from a dirty tree writes an error document"
+    );
+
+    check(
+        dirty.err.find("not clean") != string::npos,
+        "baseline from a dirty tree says why"
+    );
+
     // An array field is written as one line of quoted strings; read
     // it out of a real command so the shape checked is the one that
     // ships.

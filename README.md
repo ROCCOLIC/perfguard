@@ -29,6 +29,13 @@ them. `.perfguard/` is not version-controlled: a measurement only means
 something next to the machine and build configuration that produced it,
 so every checkout records its own.
 
+The tree has to be clean. What is measured is the benchmark built out
+of the working tree, while what is recorded is HEAD, and `git bisect`
+later treats the recorded commit as good and searches from it. A tree
+with uncommitted changes would leave that search anchored to code that
+was never measured, so `baseline` refuses until the work is committed
+or stashed.
+
 ## Commands
 
 | Command | What it does |
