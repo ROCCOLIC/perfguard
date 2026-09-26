@@ -115,10 +115,11 @@ within a noise that reads as a large fraction of the threshold is one
 to measure again before acting on.
 
 The JSON documents carry the spread behind both medians, as
-`baseline_stats` and `current_stats`, so the figure can be worked out
-from what the command wrote rather than only read off the verdict line.
-`--check` also keeps the nested `stats.baseline` / `stats.current` it
-wrote before the pair existed.
+`baseline_stats` and `current_stats`, and the figure itself as
+`noise_percent`, so a CI job reads the number rather than working it out
+from the samples. It is left out when the samples are too few to draw it
+from. `--check` also keeps the nested `stats.baseline` /
+`stats.current` it wrote before the pair existed.
 
 ## CI
 
