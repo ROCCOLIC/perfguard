@@ -103,6 +103,31 @@ void check_near(
     );
 }
 
+// Writes a project the CLI can run in: a .git directory beside a
+// CMakeLists.txt is what find_project_root looks for. Returns false
+// when git is unavailable, which the caller reports as a skip.
+bool make_projects_root(
+    const fs::path& path
+)
+{
+    error_code error;
+
+    fs::create_directories(path, error);
+
+    write_text_file(
+        path / "CMakeLists.txt",
+        "# scratch\n"
+    );
+
+    return run_command(
+        "cd /d \"" +
+        path.string() +
+        "\" && git init",
+        true,
+        60000
+    ).exit_code == 0;
+}
+
 // ============================================================
 // trim
 // ============================================================
@@ -1533,6 +1558,39 @@ void test_cli_contract(
         "a run outside a project writes an error document"
     );
 
+    // --bisect-test is called by git bisect run, not by a person, but
+    // it parses the same two numbers. A nan baseline would pass its
+    // "> 0" test, make every step's change nan, and have "nan >
+    // threshold" read as false -- a bisect that reports GOOD for every
+    // commit. It skips rather than deciding on a number it cannot use.
+    const fs::path argument_project =
+        session_temp_directory() /
+        "argument-project";
+
+    if (make_projects_root(argument_project)) {
+        check(
+            run_cli(
+                perfguard,
+                "--bisect-test nan 10",
+                argument_project
+            ).exit_code == 125 &&
+            run_cli(
+                perfguard,
+                "--bisect-test 10x 10",
+                argument_project
+            ).exit_code == 125 &&
+            run_cli(
+                perfguard,
+                "--bisect-test 0 10",
+                argument_project
+            ).exit_code == 125,
+            "--bisect-test skips on an unparseable or non-positive argument"
+        );
+    }
+    else {
+        printf("SKIP: could not create a scratch repository\n");
+    }
+
     // A baseline names a commit, so it may only be recorded from a
     // tree that commit describes. This runs in a throwaway repository
     // so the refusal is read without touching this checkout's baseline.
@@ -1540,28 +1598,12 @@ void test_cli_contract(
         session_temp_directory() /
         "dirty-tree";
 
-    fs::create_directories(scratch, error);
-
-    const CommandResult initialised =
-        run_command(
-            "cd /d \"" +
-            scratch.string() +
-            "\" && git init",
-            true,
-            60000
-        );
-
-    if (initialised.exit_code != 0) {
+    if (!make_projects_root(scratch)) {
         printf("SKIP: could not create a scratch repository\n");
         return;
     }
 
-    // The untracked file is what makes the tree dirty; a project root
-    // is recognised by a .git directory beside a CMakeLists.txt.
-    write_text_file(
-        scratch / "CMakeLists.txt",
-        "# scratch\n"
-    );
+    // The untracked CMakeLists.txt is what makes the tree dirty.
 
     const CliResult dirty =
         run_cli(perfguard, "baseline --json", scratch);
@@ -1640,25 +1682,7 @@ void test_cli_json_spreads(
         session_temp_directory() /
         "spread-project";
 
-    error_code error;
-
-    fs::create_directories(scratch, error);
-
-    write_text_file(
-        scratch / "CMakeLists.txt",
-        "# scratch\n"
-    );
-
-    const CommandResult initialised =
-        run_command(
-            "cd /d \"" +
-            scratch.string() +
-            "\" && git init",
-            true,
-            60000
-        );
-
-    if (initialised.exit_code != 0) {
+    if (!make_projects_root(scratch)) {
         printf("SKIP: could not create a scratch repository\n");
         return;
     }

@@ -93,7 +93,11 @@ Because `--check` builds both sides, it takes minutes, not seconds.
 | 2 | Error, or the stored baseline cannot be compared |
 
 `--bisect-test` is an internal step of `git bisect` and keeps its own
-contract: 0 = good, 1 = bad, 125 = skip.
+contract: 0 = good, 1 = bad, 125 = skip. Its two numbers are held to
+the same rule as the options above: a value that is not a whole,
+finite, positive number is skipped (125) rather than read as a prefix
+of itself -- a nan baseline would otherwise make every step's change
+nan and have every commit reported good.
 
 ## Threshold and noise
 

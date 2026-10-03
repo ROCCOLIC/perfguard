@@ -1,5 +1,6 @@
 #include "bisect.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -246,16 +247,28 @@ int run_bisect_test(
     double baseline_us = 0.0;
     double threshold = DEFAULT_THRESHOLD_PERCENT;
 
+    // The whole of each value has to be a finite, positive number.
+    // stod stops at the first character it cannot use, so "10x" would
+    // be read as 10; and a nan baseline passes "> 0", after which
+    // every step's change is nan, "nan > threshold" is false, and the
+    // whole bisect reports GOOD. The CLI refuses both of these before
+    // it runs; this is the same path reached through git bisect run,
+    // so it refuses them the same way.
+    size_t baseline_consumed = 0;
+    size_t threshold_consumed = 0;
+
     try
     {
         baseline_us =
             stod(
-                baseline_us_text
+                baseline_us_text,
+                &baseline_consumed
             );
 
         threshold =
             stod(
-                threshold_text
+                threshold_text,
+                &threshold_consumed
             );
     }
     catch (...)
@@ -266,10 +279,17 @@ int run_bisect_test(
         return 125;
     }
 
-    if (baseline_us <= 0.0)
+    if (
+        baseline_consumed != baseline_us_text.size() ||
+        threshold_consumed != threshold_text.size() ||
+        !isfinite(baseline_us) ||
+        !isfinite(threshold) ||
+        baseline_us <= 0.0 ||
+        threshold <= 0.0
+    )
     {
         cerr
-            << "Invalid baseline.\n";
+            << "Invalid bisect parameters.\n";
 
         return 125;
     }
