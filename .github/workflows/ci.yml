@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      # The suite reads this repository's own history -- analyze_commit
+      # and the --evidence contract test run git over HEAD -- so the
+      # clone the tests see is the full one rather than the shallow
+      # default.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022"
+
+      - name: Build
+        run: cmake --build build --config Debug
+
+      # Drive the same entry point the README names. The CLI tests build
+      # and measure the benchmark, so this takes some seconds rather
+      # than none.
+      - name: Test
+        run: ctest --test-dir build -C Debug --output-on-failure

@@ -3,6 +3,14 @@
 Detects performance regressions by building and measuring the same
 benchmark in one session, on one machine, and comparing medians.
 
+## Requirements
+
+Windows with the Visual Studio 2022 C++ toolset, CMake 3.20 or newer,
+and Git. The tool drives `cmd.exe`, reads build metadata from MSVC, and
+configures the worktrees it builds with the `Visual Studio 17 2022`
+generator by name, so it is Windows-only and is built with that
+toolset.
+
 ## Build
 
     cmake -S . -B build -G "Visual Studio 17 2022"
@@ -161,3 +169,7 @@ from. `--check` also keeps the nested `stats.baseline` /
 
 `tools/bisect_check.ps1` and `tools/diagnose_commit.ps1` are thin
 wrappers: they build the tool, call the CLI, and pass its exit code on.
+
+## License
+
+MIT. See `LICENSE`.
