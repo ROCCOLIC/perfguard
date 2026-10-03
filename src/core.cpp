@@ -1155,6 +1155,22 @@ bool baseline_comparable(
         return false;
     }
 
+    // A different compiler is a different toolchain for the same
+    // source, and it is recorded for exactly that reason: the number
+    // it produced is not this build's number to compare against.
+    if (
+        baseline.compiler != PERFGUARD_COMPILER
+    ) {
+        reason =
+            "The stored baseline was built with \"" +
+            baseline.compiler +
+            "\" and this build uses \"" +
+            PERFGUARD_COMPILER +
+            "\".";
+
+        return false;
+    }
+
     if (
         baseline.build_type != PERFGUARD_BUILD_TYPE
     ) {
@@ -1296,6 +1312,21 @@ bool read_baseline(
     json_get_number(content, "stdev_us", baseline.stdev_us);
     json_get_number(content, "min_us", baseline.min_us);
     json_get_number(content, "max_us", baseline.max_us);
+
+    // Every verdict is the change of this median, so a version that
+    // records one is refused without it rather than compared as a
+    // zero baseline: calculate_change reads a baseline of zero as no
+    // change at all, which would report a green verdict from a file
+    // that could not supply the figure the verdict is drawn from.
+    if (
+        baseline.schema_version > 1 &&
+        baseline.median_us <= 0.0
+    ) {
+        error =
+            "The baseline has no usable median.";
+
+        return false;
+    }
 
     double runs = 0.0;
 

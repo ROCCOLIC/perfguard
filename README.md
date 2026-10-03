@@ -118,9 +118,10 @@ alternately, A, B, A, B, so drift between the two builds cancels out
 instead of being read as a regression.
 
 A baseline is only compared when its environment matches. An older
-`schema_version`, a different benchmark, a different `build_type` or a
-different CMake generator is refused with exit code 2 rather than
-compared, with a pointer to re-run `perfguard baseline`.
+`schema_version`, a different benchmark, a different compiler, a
+different `build_type` or a different CMake generator is refused with
+exit code 2 rather than compared, with a pointer to re-run
+`perfguard baseline`.
 
 The verdict is drawn from the median of several samples rather than one
 run; `--runs` sets how many. Outliers are only rejected when there are

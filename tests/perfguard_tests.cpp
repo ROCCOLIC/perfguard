@@ -952,6 +952,31 @@ void test_baseline()
         "the refusal says why"
     );
 
+    // A version 2 file that carries no median has no figure to compare,
+    // so it is refused rather than compared as a zero baseline.
+    {
+        ofstream no_median(old_file);
+
+        no_median
+            << "{\n"
+            << "    \"schema_version\": 2,\n"
+            << "    \"benchmark\": \"sort_1m\",\n"
+            << "    \"commit\": \"80d7fc3\",\n"
+            << "    \"average_us\": 180409.00\n"
+            << "}\n";
+    }
+
+    Baseline no_median_read;
+
+    check(
+        !read_baseline(
+            project_root,
+            no_median_read,
+            error
+        ),
+        "a version 2 baseline without a median is refused"
+    );
+
     // A different build configuration is refused too.
     Baseline release = written;
 
@@ -960,6 +985,17 @@ void test_baseline()
     check(
         !baseline_comparable(release, reason),
         "a baseline from another build type is not comparable"
+    );
+
+    // A toolchain change moves the compiled number for the same
+    // source, so a baseline recorded before one is not comparable.
+    Baseline other_compiler = written;
+
+    other_compiler.compiler = "unknown compiler";
+
+    check(
+        !baseline_comparable(other_compiler, reason),
+        "a baseline from another compiler is not comparable"
     );
 
     // A baseline for another benchmark is refused.
