@@ -431,6 +431,50 @@ void test_analyze_added_line()
 }
 
 // ============================================================
+// Benchmark sources
+//
+// The evidence scan looks for benchmark-moving calls, and a test
+// calls the same functions to check they behave. Scanning tests named
+// unrelated assertions as the cause of a regression, so a path has to
+// say whether it is scanned at all.
+// ============================================================
+
+void test_is_benchmark_source()
+{
+    check(
+        is_benchmark_source("src/main.cpp"),
+        "a source file is scanned"
+    );
+
+    check(
+        is_benchmark_source("benchmarks/sort_1m.cpp"),
+        "a benchmark file is scanned"
+    );
+
+    check(
+        !is_benchmark_source("tests/perfguard_tests.cpp"),
+        "a test file is not scanned"
+    );
+
+    check(
+        !is_benchmark_source("src/tests/helper.cpp"),
+        "a nested test directory is not scanned"
+    );
+
+    // Matched on whole path segments, so a source file whose name
+    // merely begins with the letters is still scanned.
+    check(
+        is_benchmark_source("src/testable.cpp"),
+        "a file whose name begins with test is still scanned"
+    );
+
+    check(
+        !is_benchmark_source("tests\\perfguard_tests.cpp"),
+        "a test path with backslashes is not scanned"
+    );
+}
+
+// ============================================================
 // aggregate
 // ============================================================
 
@@ -1774,6 +1818,7 @@ int main(
     test_calculate_change();
     test_extract_first_bad_commit();
     test_analyze_added_line();
+    test_is_benchmark_source();
     test_aggregate();
     test_json();
     test_baseline();

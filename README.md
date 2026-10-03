@@ -84,6 +84,13 @@ every comparison and reports no regression.
 
 Because `--check` builds both sides, it takes minutes, not seconds.
 
+`--evidence` reads the added lines of a commit and names the ones
+holding a call that can move the benchmark -- a sort, a find, an
+unordered_map -- so a regression has somewhere to be looked for.
+Test files are left out: an assertion calls the same functions a
+performance change is made of, so scanning them named unrelated test
+lines as the cause rather than the change that was.
+
 ## Exit codes
 
 | Code | Meaning |

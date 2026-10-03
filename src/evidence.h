@@ -21,3 +21,12 @@ struct EvidenceReport {
 };
 
 EvidenceReport analyze_commit(const std::string& commit);
+
+// Reports whether an added line of a path is one whose changes can
+// move the benchmark.
+//
+// Test files are excluded: their assertions call the same functions a
+// performance change is made of -- a find() on a string, a sort -- so
+// scanning them named unrelated test lines as the cause of a
+// regression.
+bool is_benchmark_source(const std::string& path);
