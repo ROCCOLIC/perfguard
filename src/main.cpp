@@ -2642,7 +2642,7 @@ int main(
 
         report
             << "- Runs: "
-            << BENCHMARK_RUNS
+            << measurement.samples
             << "\n\n";
 
         report
@@ -3241,7 +3241,7 @@ int main(
 
         report
             << "- Runs: "
-            << BENCHMARK_RUNS
+            << measurement.samples
             << "\n\n";
 
         report
